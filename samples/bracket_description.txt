@@ -1,0 +1,6 @@
+L-shaped mounting bracket, 60 mm horizontal flange × 40 mm vertical flange,
+both flanges 30 mm wide and 4 mm thick. Outer corner radius 2 mm, inner
+fillet 1 mm. Two 4.3 mm clearance holes (for M4 bolts) on the horizontal
+flange, spaced 40 mm along the flange centreline, 15 mm from the corner.
+One 4.3 mm clearance hole in the middle of the vertical flange. Flat base
+face for bed adhesion. Units millimetres.

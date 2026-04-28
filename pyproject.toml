@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "buxter"
+version = "0.1.0"
+description = "Buxter CAD Agent — generate FreeCAD parametric models from a photo and a description."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Buxter" }]
+dependencies = [
+    "anthropic>=0.78",
+    "click>=8.1",
+    "pillow>=10.0",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "rich>=13.7",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+    "trimesh>=4.0",
+    "numpy-stl>=3.1",
+]
+notebook = [
+    "jupyterlab>=4.0",
+    "ipywidgets>=8.1",
+    "matplotlib>=3.8",
+    "trimesh>=4.0",
+]
+
+[project.scripts]
+buxter = "buxter.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/buxter"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
