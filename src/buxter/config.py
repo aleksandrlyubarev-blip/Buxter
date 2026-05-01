@@ -10,6 +10,9 @@ MODEL_ALIASES: dict[str, str] = {
     "haiku": "claude-haiku-4-5-20251001",
 }
 
+BackendName = Literal["freecad", "fusion"]
+FusionExecMode = Literal["dryrun", "subprocess"]
+
 
 def resolve_model(name: str) -> str:
     return MODEL_ALIASES.get(name, name)
@@ -20,10 +23,14 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     freecad_cmd: str | None = Field(default=None, alias="FREECAD_CMD")
+    fusion_cmd: str | None = Field(default=None, alias="FUSION_CMD")
     output_dir: Path = Field(default=Path("./out"), alias="BUXTER_OUTPUT_DIR")
     model: str = Field(default="opus", alias="BUXTER_MODEL")
     run_timeout: int = Field(default=120, alias="BUXTER_RUN_TIMEOUT")
     max_tokens: int = Field(default=8192, alias="BUXTER_MAX_TOKENS")
+    backend: BackendName = Field(default="freecad", alias="BUXTER_BACKEND")
+    fusion_exec_mode: FusionExecMode = Field(default="dryrun", alias="FUSION_EXEC_MODE")
+    fusion_emit_f3d: bool = Field(default=False, alias="FUSION_EMIT_F3D")
 
 
 def load_settings() -> Settings:
