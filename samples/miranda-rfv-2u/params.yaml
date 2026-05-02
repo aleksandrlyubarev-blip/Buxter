@@ -1,0 +1,121 @@
+# Miranda RFV — 2U Liquid-Cooled Network Server
+# Single source of truth for parametric dimensions, materials, tolerances.
+# All Fusion 360 reference scripts read these as UserParameters.
+# Units: mm unless explicitly noted.
+
+version: "1.1"
+date: "2026-05-02"
+
+chassis:
+  width_outer: 482.6        # включая rack ears
+  height: 88.9              # 2U = 2 * 44.45
+  depth: 780                # фиксация, выбрано в вилке 770–790
+  width_inner: 448.0        # equipment width = 482.6 - 2 * ear_proj
+  ear_projection: 17.3      # (482.6 - 448) / 2
+  ear_thickness: 2.0
+  sheet_thickness: 1.0
+  material: galvanized_steel
+  finish: zinc_passivate
+  rack_unit_pitch: 44.45    # 1U
+  hole_grid:
+    pitch_x: 25.0           # standard equipment mounting grid
+    pitch_y: 25.0
+    screw_size: M3          # M3 по умолчанию, M4 на boss-и
+    screw_clearance: 3.2    # M3 clearance
+  rear_cutouts:
+    bus_bar:
+      width: 60
+      height: 20
+      offset_z: 30          # от основания
+    qdc:
+      diameter: 30
+      offset_z: 60
+
+asic:
+  count: 2                  # default; up to 4 через UserParameter
+  footprint_w: 80.0
+  footprint_d: 80.0
+  pitch: 180.0              # между центрами ASIC при count=2
+  z_height: 8.0             # placeholder package height
+
+boards:
+  asic_main:
+    pcb_thickness: 1.6
+    interconnect_w: 200
+    interconnect_d: 240
+    compute_w: 120
+    compute_d: 100
+    b2b_alignment_pins_per_joint: 4
+  bmc:
+    pcb_thickness: 1.6
+    width: 100
+    depth: 200
+    offset_x: 150           # справа от ASIC board
+
+cold_plate:
+  material: copper_C11000
+  base_w: 100
+  base_d: 100
+  base_t: 8.0
+  contact_flatness: 0.05    # ≤ 0.05 mm
+  microchannel_pitch: 1.0
+  microchannel_width: 0.5
+  microchannel_depth: 3.0
+  tube_od: 8.0
+  tube_id: 6.0
+  split: true               # split-type (top/bottom halves)
+
+manifold:
+  material: copper_C11000   # фиксировать в следующем спринте
+  position: center
+  qdc_count: 4              # 2 подача + 2 обратка
+  qdc_pitch: 35.0
+
+hoses:
+  supply_color: blue
+  return_color: black
+  flexible_od: 12.0
+  rigid_od: 10.0
+  qdc_size: 8.0
+
+bus_bar:
+  voltage: 54               # V HVDC
+  material: copper_C11000
+  width: 40                 # база, уточнить по току
+  thickness: 6
+  length: 200
+  insulator_material: PA66
+  insulator_clearance: 8.0  # воздушный зазор до корпуса
+
+front_panel:
+  thickness: 2.0
+  material: aluminum_5052
+  ports:
+    ethernet: 3
+    usb: 1
+    indicators: 4
+  rfid_tag_pad:
+    width: 30
+    height: 15
+    recess: 0.4
+
+alignment_pins:
+  diameter: 4.0             # H7/h7
+  protrusion: 5.0
+  tolerance: 0.05
+  material: hardened_steel
+
+rfid_pad:
+  default_w: 40
+  default_d: 25
+  recess_depth: 0.5
+  type: "UHF 860-960 MHz"   # выбрать в следующем спринте (HF/UHF)
+
+tolerances:
+  critical_mate: 0.05       # cold plate ↔ ASIC, B2B alignment
+  general: 0.1              # платы в направляющих
+  loose: 0.5                # косметические
+
+export:
+  formats: [f3d, step, stl]
+  stl_quality: high

@@ -1,0 +1,60 @@
+Build a parametric Fusion 360 model of the Miranda RFV 2U liquid-cooled
+network server CHASSIS only (deliverable #1 of 8).
+
+Fixed parameters (register all as UserParameters so the operator can edit
+in Modify -> Change Parameters; reference samples/miranda-rfv-2u/params.yaml):
+
+- Outer width incl. rack ears: 482.6 mm
+- Equipment body width: 448.0 mm
+- Rack ear projection per side: 17.3 mm
+- Rack ear plate thickness: 2.0 mm
+- Height (2U): 88.9 mm
+- Depth: 780 mm
+- Sheet thickness: 1.0 mm (galvanized steel)
+- Mounting hole grid pitch: 25 mm in X and Y
+- M3 clearance hole: 3.2 mm
+- Mounting boss outer diameter: 5.5 mm, height 6.0 mm
+- Alignment pin diameter: 4.0 mm (H7/h7), protrusion 5.0 mm
+- RFID landing pad: 40 x 25 mm, recess 0.5 mm, on base near front edge
+- Rear cutouts:
+  * Bus bar slot: 60 x 20 mm, centered horizontally, 30 mm above base
+  * QDC pass-through: circular, 30 mm diameter, centered, 60 mm above base
+
+Geometry requirements:
+
+1. Build five separate Fusion components inside the root: Base, Side_L,
+   Side_R, Rear, Rack_Ear_L, Rack_Ear_R. Each component is a single body.
+   The chassis must be physically disassemblable (every joint via
+   alignment pins + screws, no welds modeled).
+2. Coordinate origin: center of the front edge of the base plate. X is
+   width (right positive), Y is depth (rearward positive), Z is up.
+3. Top is intentionally OPEN for demo — do NOT model a top cover.
+4. Side panels stand on the base, flush with its outer edges, full depth.
+5. Rear panel is flush with the rear edge, height equal to chassis_H.
+6. Rack ears are flat plates extending sideways from the front of the
+   side panels, with two 12.7 mm (0.5 inch) clearance holes each at
+   standard EIA-310 rack pitch (the two upper U positions for a 2U
+   ear: holes at 6.35 mm and 22.225 mm from top, vertically centered).
+7. Add an internal pattern of mounting bosses on the base: 6 columns x
+   2 rows, evenly distributed in the inner area, each boss = cylinder
+   5.5 mm OD x 6.0 mm tall with a coaxial M3 clearance hole.
+8. Add 4 alignment pins as cylinders 4.0 mm OD x 5.0 mm tall at the
+   four inner corners of the base (50 mm offset from each corner edge).
+9. Add a rectangular RFID landing pad (40 x 25 mm) recessed 0.5 mm into
+   the top face of the base, 60 mm from the front edge, centered in X.
+10. Cut the bus-bar slot and the QDC hole through the rear panel as
+    specified above.
+
+Exports (only when env vars are set, so the script also works as a
+standalone Run-from-GUI):
+
+- BUXTER_F3D  -> design.exportManager.createFusionArchiveExportOptions
+- BUXTER_STEP -> design.exportManager.createSTEPExportOptions
+- BUXTER_STL  -> design.exportManager.createSTLExportOptions (rootComponent)
+
+Do NOT close the document automatically — the operator inspects it.
+
+Name the root component "Miranda_RFV_Chassis". Add UserParameters with
+self-explanatory comments. Keep timeline parametric (no direct edit /
+base features). Wrap run() in try/except, surface failures via
+ui.messageBox(traceback.format_exc()), then re-raise.
