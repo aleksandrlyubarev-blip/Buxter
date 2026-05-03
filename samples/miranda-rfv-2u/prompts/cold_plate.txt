@@ -1,0 +1,66 @@
+Build a parametric Fusion 360 model of the Miranda RFV split-type
+COLD PLATE for one ASIC (deliverable #4 of 10).
+
+The macet has 2 ASIC → 2 cold plates; this script models ONE plate.
+The master assembly (#10) will instantiate it twice with different X
+offsets per ASIC pitch.
+
+Fixed parameters (register all as UserParameters; reference
+samples/miranda-rfv-2u/params.yaml -> cold_plate:):
+
+- ASIC footprint: 80 x 80 mm.
+- Cold plate footprint: 88 x 88 mm (compressed, only 4 mm overhang).
+- Material (visual): copper C11000.
+- Split-type, two halves bolted together with 4 x M3 corner screws:
+  * Bottom_Half: 88 x 88 x 8 mm, lapped contact face on -Z, skived
+    fin pattern milled into the +Z face. Fin thickness 0.3 mm, pitch
+    1.0 mm, depth 6.0 mm. Fins run along X over 80 mm of the 88 mm
+    width (4 mm border each side).
+  * Top_Half: 88 x 88 x 3 mm flat plate, 4 stack-up clearance holes
+    in corners (M3, 3.2 mm), 2 inlet/outlet through-holes 8.4 mm
+    diameter at ±15 mm from center along Y (inlet_pitch = 30 mm).
+- O-ring groove on top face of Bottom_Half perimeter (1.5 mm width,
+  1.0 mm depth, 2 mm offset from outer edge) for sealing against Top.
+- U-tube: copper tube OD 8 mm / ID 6 mm. Path = leg up 25 mm + 180°
+  bend radius 15 mm + leg down 25 mm. The two legs are soldered into
+  the Top_Half inlet/outlet holes (we model it sticking 3 mm below
+  the Top_Half +Z face).
+- 2 hose barb fittings on the free ends of the U-tube. Each fitting
+  is a coaxial cylinder OD 12 mm length 10 mm pressed onto the tube
+  end (push-fit, no taper, demo-grade).
+- Top-face RFID landing pad on Top_Half: 25 x 12 mm recess 0.4 mm,
+  off-center to clear the U-tube footprint.
+
+Geometry rules:
+
+1. Build five Fusion components inside the root: Bottom_Half,
+   Top_Half, U_Tube, Barb_Fitting_A, Barb_Fitting_B. Each is a single
+   body. The cold plate must be physically disassemblable (no welds
+   modeled; the U-tube is shown as a single tube but in real life it
+   is soldered to the Top_Half).
+2. Coordinate origin: center of the lapped contact face on the bottom
+   side of Bottom_Half. X = ASIC width axis, Y = ASIC depth axis,
+   Z = up (toward U-tube).
+3. Use UserParameters for: cp_base_w, cp_base_d, cp_bot_t, cp_top_t,
+   fin_thickness, fin_pitch, fin_depth, fin_count, stack_hole_pitch,
+   stack_hole_d, inlet_pitch, inlet_d, tube_od, tube_id, tube_leg_h,
+   tube_bend_r, barb_od, barb_len, oring_w, oring_d, rfid_pad_W,
+   rfid_pad_D, rfid_pad_recess.
+4. Bottom_Half fins: build via one rectangular cut feature for a
+   single fin slot (slot width = fin_pitch - fin_thickness = 0.7 mm,
+   length = 80 mm centered on Y, depth = fin_depth) and then a
+   RectangularPattern of 80 copies along X with pitch fin_pitch.
+5. Top_Half: extrude 88x88 plate; cut 4 corner holes; cut 2 inlet
+   holes 8.4 mm at ±inlet_pitch/2 along Y; cut RFID pad recess.
+6. U_Tube: build with the PipeFeature along a sketched path (vertical
+   line up + 180° arc + vertical line down on the YZ plane, centered
+   on inlet_pitch/2). Bore OD 8 / ID 6 mm.
+7. Barb fittings: cylindrical OD 12 x 10 mm, slid onto each free leg
+   of the U-tube, centered on the tube axis.
+
+Exports (only when env vars are set):
+
+- BUXTER_F3D, BUXTER_STEP, BUXTER_STL via design.exportManager.
+
+Do NOT close the document. Wrap run() in try/except, surface failures
+via ui.messageBox(traceback.format_exc()), then re-raise.
