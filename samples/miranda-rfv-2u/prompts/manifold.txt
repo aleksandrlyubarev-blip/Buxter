@@ -1,0 +1,53 @@
+Build a parametric Fusion 360 model of the Miranda RFV 2U central
+liquid-cooling MANIFOLD (deliverable #3 of 10).
+
+Fixed parameters (register all as UserParameters; reference
+samples/miranda-rfv-2u/params.yaml -> manifold:):
+
+- Material (visual only): stainless steel AISI 304, opaque grey.
+- Body: 30 mm (X, across rack) x 200 mm (Y, along rack) x 30 mm (Z).
+- Position: centered on chassis X (X=0), centered along Y at
+  manifold_centerline_y = 350 mm from chassis front edge.
+- Z bottom = 10 mm above base (clears mounting bosses).
+- Body is solid stainless (we do NOT model internal supply/return
+  channels in this revision; they are CFD-only).
+- 4 blind-mate QDC ports, machined as cylindrical bosses on the long
+  side faces (+X and -X), 12 mm long, 16 mm diameter, with a coaxial
+  G1/4 thread hole (modeled as 11.0 mm clearance for the threaded
+  insert; threads themselves not modeled).
+  * 2 supply ports (upper, Z = 22 mm) — one on +X face, one on -X face.
+  * 2 return ports (lower, Z = 8 mm) — one on +X face, one on -X face.
+  * Y position of supply/return pair: ±qdc_pitch_y/2 = ±40 mm from the
+    manifold center along Y.
+- 2 rear-facing inlet/outlet bosses on the rear face (+Y), 12 mm
+  diameter clearance hole, 12 mm boss length. One supply (upper,
+  Z = 22 mm), one return (lower, Z = 8 mm), centered on X.
+- 2 mounting brackets (separate components attached to the manifold
+  body) on the underside, M4 clearance holes (4.5 mm), pitch 120 mm
+  along Y, 4 holes total, for fastening to chassis base.
+- Add a 30 x 15 mm RFID landing pad recessed 0.4 mm into the top face,
+  centered.
+- Add an alignment pin notch (4.0 mm dia x 5 mm deep blind hole) on the
+  underside near each bracket — mates with chassis base alignment pins.
+
+Geometry rules:
+
+1. Build manifold body as one component named "Manifold". Add the two
+   brackets as separate child components "Bracket_Front" and
+   "Bracket_Rear" — they are fastened separately and must be removable.
+2. Coordinate origin: chassis origin (center front edge of base, +Y
+   into the rack, +Z up). Position the manifold so its body center is
+   at (0, manifold_centerline_y, body_h/2 + bottom_clearance).
+3. Use UserParameters for all dimensions (body_w, body_d, body_h,
+   centerline_y, qdc_supply_z, qdc_return_z, qdc_pitch_y, qdc_boss_d,
+   qdc_boss_l, qdc_thread_clearance, rear_inlet_d, mount_pitch,
+   mount_hole_d, bottom_clearance, rfid_pad_W, rfid_pad_D,
+   rfid_pad_recess, align_pin_d).
+
+Exports — only when env vars are set:
+
+- BUXTER_F3D, BUXTER_STEP, BUXTER_STL via design.exportManager.
+
+Do NOT close the document automatically. Wrap run() in try/except and
+surface failures via ui.messageBox(traceback.format_exc()), then
+re-raise.

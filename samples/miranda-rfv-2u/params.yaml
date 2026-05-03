@@ -1,0 +1,150 @@
+# Miranda RFV — 2U Liquid-Cooled Network Server
+# Single source of truth for parametric dimensions, materials, tolerances.
+# Units: mm unless explicitly noted.
+
+version: "1.2"
+date: "2026-05-02"
+
+chassis:
+  width_outer: 482.6
+  height: 88.9
+  depth: 780
+  width_inner: 448.0
+  ear_projection: 17.3
+  ear_thickness: 2.0
+  sheet_thickness: 1.0
+  material: galvanized_steel
+  finish: zinc_passivate
+  rack_unit_pitch: 44.45
+  hole_grid:
+    pitch_x: 25.0
+    pitch_y: 25.0
+    screw_size: M3
+    screw_clearance: 3.2
+  rear_cutouts:
+    bus_bar:
+      width: 60
+      height: 20
+      offset_z: 30
+    qdc:
+      diameter: 30
+      offset_z: 60
+  card_guides:
+    pitch: 25.0           # по Y; фиксирует позицию краёв PCB
+    height: 5.0
+    width: 3.0
+
+asic:
+  count: 2
+  footprint_w: 80.0
+  footprint_d: 80.0
+  pitch: 180.0
+  z_height: 8.0
+
+boards:
+  asic_main:
+    pcb_thickness: 1.6
+    interconnect_w: 200
+    interconnect_d: 240
+    compute_w: 120
+    compute_d: 100
+    b2b_alignment_pins_per_joint: 4
+  bmc:
+    carrier_pcb_thickness: 1.6
+    carrier_width: 110
+    carrier_depth: 220
+    offset_x: 165
+    bmc_chip_footprint: 25.0      # ASPEED-class BGA, placeholder
+    com_express:
+      type: "Type 6 Compact"
+      module_w: 95.0
+      module_d: 95.0
+      module_h: 12.5              # с heatsink
+      connector_pitch: 0.5
+      connector_pin_count: 440    # AB + CD
+      standoff_grid: 86.0
+      standoff_size: M2.5
+
+cold_plate:
+  material: copper_C11000
+  base_w: 100
+  base_d: 100
+  base_t: 8.0
+  contact_flatness: 0.05
+  microchannel:
+    geometry: skived_fin
+    fin_thickness: 0.3
+    fin_pitch: 1.0
+    fin_depth: 8.0
+  tube_od: 8.0
+  tube_id: 6.0
+  split: true
+
+manifold:
+  material: stainless_steel_AISI_304
+  position: center
+  body_w: 30.0                    # по X (поперёк)
+  body_d: 200.0                   # по Y (вдоль сервера)
+  body_h: 30.0                    # по Z
+  qdc_count: 4                    # 2 supply + 2 return
+  qdc_thread: "G1/4"
+  qdc_boss_d: 16.0
+  qdc_boss_l: 12.0                # выступ boss от боковой грани
+  qdc_pitch_y: 80.0               # расстояние между supply и return по Y
+  qdc_supply_z: 22.0              # верхние порты
+  qdc_return_z: 8.0               # нижние порты
+  rear_inlet_d: 12.0              # магистральные вводы сзади
+  mount_pitch: 120.0              # с брэкетами к base
+  mount_hole_d: 4.5               # M4 clearance
+  centerline_y: 350.0             # положение центра manifold от передней кромки
+
+hoses:
+  supply_color: blue
+  return_color: black
+  flexible_od: 12.0
+  rigid_od: 10.0
+  qdc_size: 8.0
+
+bus_bar:
+  voltage: 54                     # V HVDC
+  peak_current: 50                # A
+  peak_power_w: 2700
+  material: copper_C11000
+  width: 25                       # мм (перерасчёт по 50 А)
+  thickness: 8
+  length: 200
+  insulator_material: PA66
+  insulator_clearance: 8.0
+
+front_panel:
+  thickness: 2.0
+  material: aluminum_5052
+  ports:
+    ethernet: 3
+    usb: 1
+    indicators: 4
+  rfid_tag_pad:
+    width: 30
+    height: 15
+    recess: 0.4
+
+alignment_pins:
+  diameter: 4.0
+  protrusion: 5.0
+  tolerance: 0.05
+  material: hardened_steel
+
+rfid_pad:
+  default_w: 40
+  default_d: 25
+  recess_depth: 0.5
+  type: "HF 13.56 MHz"            # NFC-class
+
+tolerances:
+  critical_mate: 0.05
+  general: 0.1
+  loose: 0.5
+
+export:
+  formats: [f3d, step, stl]
+  stl_quality: high
