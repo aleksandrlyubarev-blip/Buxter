@@ -176,5 +176,54 @@ def retry(
         console.print(f"[bold green]✓ F3D:[/]  {artifacts.extra_path}")
 
 
+@cli.command()
+@click.option("--task", "-t", required=True, help="What to do in the browser, in plain text.")
+@click.option("--url", default=None, help="Start URL for the web application.")
+@click.option("--attach", "-a", multiple=True,
+              type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="File the agent is allowed to upload (repeatable), e.g. out/out.stl.")
+@click.option("--headed", is_flag=True, help="Show the browser window (default: headless).")
+@click.option("--model", default=None, help="Model alias: opus / sonnet / haiku, or full id.")
+def web(task: str, url: str | None, attach: tuple[Path, ...], headed: bool, model: str | None) -> None:
+    """Drive a web app with the CAD artifacts: upload, set parameters, run."""
+    from .browser import PlaywrightSession
+    from .web_agent import WebStep, run_web_task
+
+    settings = load_settings()
+    if model:
+        settings.model = model
+
+    console.print(
+        f"[bold cyan]Buxter web[/] model=[green]{settings.model}[/] "
+        f"headless={not headed} attachments={[p.name for p in attach]}"
+    )
+
+    def show(step: WebStep) -> None:
+        console.print(f"[yellow]→ {step.tool}[/] {step.input} [dim]{step.result[:120]}[/]")
+
+    session = PlaywrightSession(
+        headless=not headed,
+        step_timeout_ms=settings.web_step_timeout_ms,
+        chromium_path=settings.web_chromium_path,
+    )
+    try:
+        report = run_web_task(
+            task,
+            settings=settings,
+            session=session,
+            attachments=attach,
+            start_url=url,
+            on_step=show,
+        )
+    finally:
+        session.close()
+
+    color = "green" if report.success else "red"
+    mark = "✓" if report.success else "✗"
+    console.print(f"[bold {color}]{mark} {report.summary}[/]")
+    if not report.success:
+        raise SystemExit(1)
+
+
 if __name__ == "__main__":
     cli()
