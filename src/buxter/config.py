@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     backend: BackendName = Field(default="freecad", alias="BUXTER_BACKEND")
     fusion_exec_mode: FusionExecMode = Field(default="dryrun", alias="FUSION_EXEC_MODE")
     fusion_emit_f3d: bool = Field(default=False, alias="FUSION_EMIT_F3D")
+    web_headless: bool = Field(default=True, alias="BUXTER_WEB_HEADLESS")
+    web_max_steps: int = Field(default=40, alias="BUXTER_WEB_MAX_STEPS")
+    web_step_timeout_ms: int = Field(default=15_000, alias="BUXTER_WEB_STEP_TIMEOUT_MS")
+    web_chromium_path: str | None = Field(default=None, alias="BUXTER_WEB_CHROMIUM")
 
 
 def load_settings() -> Settings:

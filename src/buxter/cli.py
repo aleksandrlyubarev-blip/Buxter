@@ -176,5 +176,97 @@ def retry(
         console.print(f"[bold green]✓ F3D:[/]  {artifacts.extra_path}")
 
 
+@cli.command()
+@click.argument("mesh", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--min-wall", type=float, default=None,
+              help="Minimal printable wall thickness in mm, e.g. 1.6 for FDM 0.4 nozzle.")
+@click.option("--expect-bbox", default=None,
+              help='Expected bounding box "XxYxZ" in mm (order-insensitive), e.g. "60x40x8".')
+@click.option("--bbox-tol", type=float, default=0.5, help="Per-axis bbox tolerance, mm.")
+@click.option("--wall-samples", type=int, default=300,
+              help="Surface sample count for the wall thickness check.")
+def validate(
+    mesh: Path,
+    min_wall: float | None,
+    expect_bbox: str | None,
+    bbox_tol: float,
+    wall_samples: int,
+) -> None:
+    """Printability gate: watertight, volume, bbox vs spec, min wall thickness."""
+    from .validator import parse_bbox, validate_mesh
+
+    expected = parse_bbox(expect_bbox) if expect_bbox else None
+    try:
+        report = validate_mesh(
+            mesh,
+            min_wall=min_wall,
+            expect_bbox=expected,
+            bbox_tol=bbox_tol,
+            wall_samples=wall_samples,
+        )
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
+
+    console.print(f"[bold]{report.path}[/]")
+    for check in report.checks:
+        mark, color = ("✓", "green") if check.ok else ("✗", "red")
+        console.print(f"  [{color}]{mark}[/] {check.name:<10} {check.detail}")
+    if report.ok:
+        console.print("[bold green]✓ printable[/]")
+    else:
+        console.print("[bold red]✗ validation failed — fix the model before slicing/upload[/]")
+        raise SystemExit(1)
+
+
+@cli.command()
+@click.option("--task", "-t", required=True, help="What to do in the browser, in plain text.")
+@click.option("--url", default=None, help="Start URL for the web application.")
+@click.option("--attach", "-a", multiple=True,
+              type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="File the agent is allowed to upload (repeatable), e.g. out/out.stl.")
+@click.option("--headed", is_flag=True, help="Show the browser window (default: headless).")
+@click.option("--model", default=None, help="Model alias: opus / sonnet / haiku, or full id.")
+def web(task: str, url: str | None, attach: tuple[Path, ...], headed: bool, model: str | None) -> None:
+    """Drive a web app with the CAD artifacts: upload, set parameters, run."""
+    from .browser import PlaywrightSession
+    from .web_agent import WebStep, run_web_task
+
+    settings = load_settings()
+    if model:
+        settings.model = model
+
+    console.print(
+        f"[bold cyan]Buxter web[/] model=[green]{settings.model}[/] "
+        f"headless={not headed} attachments={[p.name for p in attach]}"
+    )
+
+    def show(step: WebStep) -> None:
+        console.print(f"[yellow]→ {step.tool}[/] {step.input} [dim]{step.result[:120]}[/]")
+
+    session = PlaywrightSession(
+        headless=not headed,
+        step_timeout_ms=settings.web_step_timeout_ms,
+        chromium_path=settings.web_chromium_path,
+    )
+    try:
+        report = run_web_task(
+            task,
+            settings=settings,
+            session=session,
+            attachments=attach,
+            start_url=url,
+            on_step=show,
+        )
+    finally:
+        session.close()
+
+    color = "green" if report.success else "red"
+    mark = "✓" if report.success else "✗"
+    console.print(f"[bold {color}]{mark} {report.summary}[/]")
+    if not report.success:
+        raise SystemExit(1)
+
+
 if __name__ == "__main__":
     cli()

@@ -1,12 +1,14 @@
 # Buxter — CAD Agent
 
-Прототип **Modeling Agent** из архитектуры Buxter MAS. Берёт фотографию детали и текстовое описание, просит Claude сгенерировать параметрический CAD-скрипт и запускает его в выбранном бэкенде. Поддерживает **FreeCAD** (по умолчанию) и **Autodesk Fusion 360**.
+Прототип **Modeling Agent** из архитектуры Buxter MAS. Берёт фотографию детали и текстовое описание, просит Claude сгенерировать параметрический CAD-скрипт и запускает его в выбранном бэкенде. Поддерживает **FreeCAD** (по умолчанию) и **Autodesk Fusion 360**. Дополняется **Web Operator Agent** — browser-слоем, который относит готовые артефакты в веб-инструменты (см. [docs/cad-browser-architecture.md](docs/cad-browser-architecture.md)).
 
 ## Возможности
 
 - `buxter draw` — полный pipeline: фото + описание → STL/STEP.
 - `buxter inspect` — bbox/volume/количество треугольников STL.
+- `buxter validate` — printability-gate: watertight, volume, bbox против спецификации, минимальная толщина стенки (ray-sampling по экспортированному mesh).
 - `buxter retry` — повторная генерация с правками, используя прошлый скрипт как контекст.
+- `buxter web` — browser-слой: Claude управляет Chromium (Playwright), загружает STL/STEP в веб-инструмент, выставляет параметры, запускает расчёт.
 - `--backend freecad|fusion` — переключение между движками.
 - Jupyter notebook `notebooks/drawing_playground.ipynb` для интерактивных итераций.
 
@@ -83,6 +85,50 @@ FUSION_EXEC_MODE=subprocess buxter draw --backend fusion \
 buxter inspect out/out.stl
 ```
 
+### Валидация перед печатью/загрузкой (`buxter validate`)
+
+```bash
+pip install -e ".[validate]"   # trimesh + rtree
+
+buxter validate out/out.stl --min-wall 1.6 --expect-bbox 60x40x8
+```
+
+Проверяется именно экспортированный mesh, а не CAD-замысел: non-empty,
+watertight/manifold, консистентность нормалей, volume > 0, габариты против
+спецификации (±tolerance, без учёта ориентации) и тончайшая стенка по
+ray-sampling. Ненулевой exit code делает команду удобной как gate в цепочке:
+
+```bash
+buxter draw -d "..." -o out/ \
+  && buxter validate out/out.stl --min-wall 1.6 \
+  && buxter web --url https://tool.example -a out/out.stl -t "..."
+```
+
+### Browser-слой (`buxter web`)
+
+Установка (однократно):
+
+```bash
+pip install -e ".[web]"
+playwright install chromium   # или задай BUXTER_WEB_CHROMIUM=/путь/до/chromium
+```
+
+Полный цикл «CAD → веб-инструмент» в духе Codex + Comet:
+
+```bash
+buxter draw -d "кронштейн 60×40×8 мм, 2 отверстия M4" -o out/
+buxter web \
+  --url https://tool.example/upload \
+  -a out/out.stl \
+  -t "Загрузи out.stl, выставь min wall thickness 1.6 мм, запусти расчёт и \
+      процитируй job id и итоговые метрики."
+```
+
+Агент видит страницу как DOM-дайджест (текст + пронумерованные интерактивные
+элементы), умеет `goto/click/fill/upload_file/screenshot/wait` и обязан
+закончить `finish(success, summary)`. Загружать можно только файлы из `-a` —
+это жёсткий whitelist. `--headed` показывает окно браузера.
+
 Итерировать (бэкенд автоматически определяется по наличию `_gen.py` или `_gen_fusion.py`, либо задаётся явно):
 
 ```bash
@@ -111,6 +157,12 @@ photo + description ─▶ buxter.vision ─▶ Claude (multimodal)
                                        │       │
                                        ▼       ▼
                        buxter.exporter ─▶ STL + STEP (+ optional .f3d)
+                                       │
+                                       ▼ attachments whitelist
+                       buxter.web_agent ─▶ Claude (tool use)
+                                       │
+                                       ▼
+                       buxter.browser ─▶ Chromium ─▶ веб-инструмент ─▶ WebTaskReport
 ```
 
 Модули:
@@ -123,7 +175,10 @@ photo + description ─▶ buxter.vision ─▶ Claude (multimodal)
 | `src/buxter/backends.py`       | Диспетчер бэкендов (`freecad`, `fusion`)           |
 | `src/buxter/runner.py`         | Запуск скрипта в `freecadcmd`                      |
 | `src/buxter/fusion_runner.py`  | Запуск/эмиссия скрипта Fusion 360                  |
-| `src/buxter/exporter.py`       | Валидация артефактов                                |
+| `src/buxter/exporter.py`       | Валидация артефактов (файловый уровень)             |
+| `src/buxter/validator.py`      | Printability-gate: watertight/bbox/min-wall (trimesh) |
+| `src/buxter/browser.py`        | Playwright-сессия: DOM-дайджест, клики, upload      |
+| `src/buxter/web_agent.py`      | Web Operator Agent: tool-use loop поверх браузера   |
 | `src/buxter/bootstrap.py`      | Поиск бинарей (`freecadcmd`, Fusion 360)           |
 | `src/buxter/config.py`         | Настройки через `.env` (pydantic-settings)          |
 
@@ -141,7 +196,6 @@ photo + description ─▶ buxter.vision ─▶ Claude (multimodal)
 
 Этот репозиторий — изолированный прототип **Modeling Agent** из спеки Buxter MAS (см. `romeo_phd/docs/buxter-mas-architecture.md` и `romeo_phd/docs/buxter-fusion-360-integration.md`). Дальше:
 
-- `validator.py` на `trimesh` для watertight/min-wall-thickness.
 - FastAPI-обёртка для подключения к pipeline-executor в `romeo_phd`.
 - Batch-режим `buxter batch manifest.yaml` для серий образцов.
 - Self-repair loop: stderr → Claude → повтор.
