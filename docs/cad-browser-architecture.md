@@ -64,7 +64,10 @@
 buxter draw -d "inspection fixture для детали X: базовая плита 120×80×12 мм, \
   3 упора, 2 отверстия M4 под прижим" -o out/
 
-# 2. Browser-слой: веб-инструмент
+# 2. Gate: printability по экспортированному mesh
+buxter validate out/out.stl --min-wall 1.6 --expect-bbox 120x80x12
+
+# 3. Browser-слой: веб-инструмент
 buxter web \
   --url https://tool.example/upload \
   -a out/out.stl \
@@ -114,8 +117,8 @@ requirements ─▶ Modeling Agent (Claude) ─▶ freecad | fusion ─▶ STL/S
 ## Что дальше (кандидаты)
 
 - `buxter pipeline manifest.yaml` — draw → validate → web одной командой.
-- Валидатор на `trimesh` между слоями (watertight / min wall) как gate перед
-  загрузкой в веб-инструмент.
+  (Сам gate уже есть: `buxter validate` в `validator.py` — watertight,
+  volume, bbox против спецификации, min wall по ray-sampling.)
 - Доменные пресеты задач для web-агента (загрузка в конкретные инструменты)
   как параметризованные prompt-шаблоны.
 - Замер: скриншот-fallback → полноценный vision-режим для canvas/WebGL UI,
