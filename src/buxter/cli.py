@@ -299,6 +299,66 @@ def verify(mesh: Path, description: str, model: str | None) -> None:
         raise SystemExit(1)
 
 
+@cli.command()
+@click.argument("mesh_a", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("mesh_b", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--samples", type=int, default=2000, help="Surface sample count per direction.")
+def diff(mesh_a: Path, mesh_b: Path, samples: int) -> None:
+    """Quantify how two meshes differ (sampled symmetric Hausdorff distance)."""
+    from .meshtools import diff_meshes
+
+    try:
+        report = diff_meshes(mesh_a, mesh_b, samples=samples)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
+
+    console.print(f"[bold]{mesh_a.name} vs {mesh_b.name}[/]")
+    console.print(f"  hausdorff    : {report.hausdorff:.3f} mm")
+    console.print(f"  mean A→B     : {report.mean_a_to_b:.3f} mm")
+    console.print(f"  mean B→A     : {report.mean_b_to_a:.3f} mm")
+    console.print(f"  volume delta : {report.volume_delta:.2f} mm³")
+    console.print(
+        f"  bbox A       : {report.bbox_a[0]:.2f}×{report.bbox_a[1]:.2f}×{report.bbox_a[2]:.2f} mm"
+    )
+    console.print(
+        f"  bbox B       : {report.bbox_b[0]:.2f}×{report.bbox_b[1]:.2f}×{report.bbox_b[2]:.2f} mm"
+    )
+
+
+@cli.command()
+@click.argument("mesh_a", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("mesh_b", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--clearance", type=float, default=0.3,
+              help="Required minimum gap between the parts, mm (default 0.3).")
+@click.option("--samples", type=int, default=2000, help="Surface sample count per direction.")
+def fit(mesh_a: Path, mesh_b: Path, clearance: float, samples: int) -> None:
+    """Assembly check: interference and minimum clearance between two parts."""
+    from .meshtools import check_fit
+
+    try:
+        report = check_fit(mesh_a, mesh_b, clearance=clearance, samples=samples)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
+
+    console.print(f"[bold]{mesh_a.name} + {mesh_b.name}[/]")
+    if report.interference_volume > 0:
+        console.print(f"  [red]✗ interference: {report.interference_volume:.2f} mm³ overlap[/]")
+    else:
+        console.print("  [green]✓ no interference[/]")
+        mark, color = ("✓", "green") if report.min_gap >= clearance else ("✗", "red")
+        console.print(
+            f"  [{color}]{mark}[/] min gap {report.min_gap:.3f} mm "
+            f"(required ≥ {clearance:g} mm)"
+        )
+    if report.ok:
+        console.print("[bold green]✓ parts fit[/]")
+    else:
+        console.print("[bold red]✗ fit check failed[/]")
+        raise SystemExit(1)
+
+
 _MESH_SUFFIXES = {".stl", ".3mf", ".obj", ".ply"}
 
 

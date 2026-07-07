@@ -32,6 +32,7 @@ dev = [
 validate = [
     "trimesh>=4.0",
     "rtree>=1.0",
+    "manifold3d>=3.0",
 ]
 verify = [
     "trimesh>=4.0",
