@@ -1,4 +1,3 @@
-import base64
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,6 +6,7 @@ from typing import Any, Literal
 from anthropic import Anthropic
 
 from .config import Settings, resolve_model
+from .llm import image_block, make_client, response_text
 from .prompts import (
     FUSION_RETRY_TEMPLATE,
     FUSION_SYSTEM_PROMPT,
@@ -73,15 +73,7 @@ def _image_block(photo: Path) -> dict[str, Any]:
     suffix = photo.suffix.lower()
     if suffix not in _MEDIA_TYPES:
         raise ValueError(f"Unsupported image type: {suffix}")
-    data = base64.standard_b64encode(photo.read_bytes()).decode("ascii")
-    return {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": _MEDIA_TYPES[suffix],
-            "data": data,
-        },
-    }
+    return image_block(photo.read_bytes(), _MEDIA_TYPES[suffix])
 
 
 def _build_messages(
@@ -126,11 +118,8 @@ def generate_script(
     client: Anthropic | None = None,
     backend: BackendName = "freecad",
 ) -> GenerationResult:
-    if not settings.anthropic_api_key and client is None:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
-
+    anthropic = make_client(settings, client)
     model_id = resolve_model(settings.model)
-    anthropic = client or Anthropic(api_key=settings.anthropic_api_key)
     messages = _build_messages(description, photo, prior_script, stderr, backend)
 
     response = anthropic.messages.create(
@@ -140,7 +129,5 @@ def generate_script(
         messages=messages,
     )
 
-    raw = "".join(
-        block.text for block in response.content if getattr(block, "type", None) == "text"
-    )
+    raw = response_text(response)
     return GenerationResult(script=extract_script(raw), raw_text=raw, model=model_id)

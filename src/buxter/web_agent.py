@@ -13,7 +13,6 @@ outcome through the ``finish`` tool so callers get a structured
 
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -22,7 +21,10 @@ from anthropic import Anthropic
 
 from .browser import BrowserSession, PageDigest
 from .config import Settings, resolve_model
+from .llm import image_block, make_client, response_text
 from .prompts import WEB_SYSTEM_PROMPT
+
+_STALE_PLACEHOLDER = "[stale observation elided — call read_page/screenshot again if needed]"
 
 WEB_TOOLS: list[dict[str, Any]] = [
     {
@@ -177,25 +179,59 @@ def _dispatch(
                 )
             return session.upload_file(int(args["element_id"]), path), False
         if name == "screenshot":
-            png = session.screenshot()
-            return (
-                [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": base64.standard_b64encode(png).decode("ascii"),
-                        },
-                    }
-                ],
-                False,
-            )
+            return [image_block(session.screenshot(), "image/png")], False
         if name == "wait":
             return session.wait(float(args["seconds"])), False
         return f"Unknown tool {name!r}", True
     except Exception as exc:  # surface browser errors to the model, don't crash
         return f"{type(exc).__name__}: {exc}", True
+
+
+def _attachment_names(attachments: tuple[Path, ...] | list[Path]) -> dict[str, Path]:
+    """Map unique upload names to resolved paths.
+
+    Keyed by basename, but same-named files from different directories get a
+    numeric suffix instead of silently shadowing each other.
+    """
+    allowed: dict[str, Path] = {}
+    for raw in attachments:
+        path = Path(raw).resolve()
+        name = path.name
+        if allowed.get(name) == path:
+            continue
+        if name in allowed:
+            index = 2
+            while f"{path.stem}-{index}{path.suffix}" in allowed:
+                index += 1
+            name = f"{path.stem}-{index}{path.suffix}"
+        allowed[name] = path
+    return allowed
+
+
+def _elide_stale_observations(messages: list[dict[str, Any]]) -> None:
+    """Blank all but the newest page digest and newest screenshot in-place.
+
+    Element ids from older digests are stale by contract and screenshots of
+    left-behind pages are dead weight; resending them makes input tokens grow
+    quadratically over a run.
+    """
+    digests: list[dict[str, Any]] = []
+    images: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") != "user" or not isinstance(message.get("content"), list):
+            continue
+        for block in message["content"]:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            payload = block.get("content")
+            if isinstance(payload, list) and any(
+                isinstance(item, dict) and item.get("type") == "image" for item in payload
+            ):
+                images.append(block)
+            elif isinstance(payload, str) and payload.startswith("url: "):
+                digests.append(block)
+    for stale in digests[:-1] + images[:-1]:
+        stale["content"] = _STALE_PLACEHOLDER
 
 
 def _task_message(task: str, attachments: dict[str, Path], start_url: str | None) -> str:
@@ -221,50 +257,44 @@ def run_web_task(
     on_step: Callable[[WebStep], None] | None = None,
 ) -> WebTaskReport:
     """Drive `session` with Claude until the model calls ``finish``."""
-    if not settings.anthropic_api_key and client is None:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
-
-    anthropic = client or Anthropic(api_key=settings.anthropic_api_key)
+    anthropic = make_client(settings, client)
     model_id = resolve_model(settings.model)
-    allowed = {path.name: path.resolve() for path in attachments}
+    allowed = _attachment_names(attachments)
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": _task_message(task, allowed, start_url)}
     ]
+    # cache_control on the static prefix (system + tools) makes every turn
+    # after the first a cache read instead of a full-price re-parse.
+    system = [
+        {"type": "text", "text": WEB_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+    ]
+    tools = [*WEB_TOOLS[:-1], {**WEB_TOOLS[-1], "cache_control": {"type": "ephemeral"}}]
     steps: list[WebStep] = []
 
     for _ in range(settings.web_max_steps):
+        _elide_stale_observations(messages)
         response = anthropic.messages.create(
             model=model_id,
             max_tokens=settings.max_tokens,
-            system=WEB_SYSTEM_PROMPT,
-            tools=WEB_TOOLS,
+            system=system,
+            tools=tools,
             messages=messages,
         )
         tool_uses = [
             block for block in response.content if getattr(block, "type", None) == "tool_use"
         ]
         if not tool_uses:
-            text = "".join(
-                block.text
-                for block in response.content
-                if getattr(block, "type", None) == "text"
-            )
+            text = response_text(response)
             return WebTaskReport(
                 success=False,
                 summary=text.strip() or "Agent stopped without calling finish.",
                 steps=steps,
             )
 
-        assistant_content: list[dict[str, Any]] = []
-        for block in response.content:
-            if getattr(block, "type", None) == "text":
-                assistant_content.append({"type": "text", "text": block.text})
-            elif getattr(block, "type", None) == "tool_use":
-                assistant_content.append(
-                    {"type": "tool_use", "id": block.id, "name": block.name,
-                     "input": block.input}
-                )
-        messages.append({"role": "assistant", "content": assistant_content})
+        # Echo the response content back verbatim: hand-rebuilding it would
+        # silently drop block types the loop doesn't know about (thinking,
+        # server_tool_use, …) and break the next request.
+        messages.append({"role": "assistant", "content": list(response.content)})
 
         results: list[dict[str, Any]] = []
         for call in tool_uses:

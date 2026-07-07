@@ -130,7 +130,7 @@ def test_upload_outside_whitelist_is_refused(settings, tmp_path: Path) -> None:
         for message in client.requests[1]["messages"]
         if isinstance(message["content"], list)
         for block in message["content"]
-        if block.get("type") == "tool_result"
+        if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert tool_results and tool_results[0]["is_error"] is True
 
@@ -165,6 +165,70 @@ def test_step_budget_exhausted(settings) -> None:
     assert report.success is False
     assert "budget" in report.summary.lower()
     assert len(report.steps) == 2
+
+
+def test_duplicate_attachment_names_are_disambiguated(settings, tmp_path: Path) -> None:
+    v1 = tmp_path / "v1" / "part.stl"
+    v2 = tmp_path / "v2" / "part.stl"
+    for path in (v1, v2):
+        path.parent.mkdir()
+        path.write_bytes(b"solid")
+    session = FakeSession()
+    client = FakeClient([
+        [_tool_use("upload_file", "t1", element_id=1, attachment="part-2.stl")],
+        [_tool_use("finish", "t2", success=True, summary="done")],
+    ])
+
+    report = run_web_task(
+        "Upload both versions.",
+        settings=settings,
+        session=session,
+        attachments=[v1, v2],
+        client=client,
+    )
+
+    task_text = client.requests[0]["messages"][0]["content"]
+    assert "part.stl" in task_text and "part-2.stl" in task_text
+    assert ("upload_file", 1, v2.resolve()) in session.calls
+    assert report.success is True
+
+
+def test_stale_observations_are_elided(settings) -> None:
+    session = FakeSession()
+    client = FakeClient([
+        [_tool_use("read_page", "t1")],
+        [_tool_use("read_page", "t2")],
+        [_tool_use("finish", "t3", success=True, summary="done")],
+    ])
+
+    run_web_task("Look around.", settings=settings, session=session, client=client)
+
+    # At the third request, the first digest must be elided, the second kept.
+    digests = [
+        block
+        for message in client.requests[2]["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert len(digests) == 2
+    assert "elided" in digests[0]["content"]
+    assert digests[1]["content"].startswith("url: ")
+
+
+def test_assistant_content_is_passed_through(settings) -> None:
+    session = FakeSession()
+    thinking = _Block(type="thinking", thinking="hmm", signature="sig")
+    client = FakeClient([
+        [thinking, _tool_use("read_page", "t1")],
+        [_tool_use("finish", "t2", success=True, summary="done")],
+    ])
+
+    run_web_task("Look.", settings=settings, session=session, client=client)
+
+    assistant = client.requests[1]["messages"][1]
+    assert assistant["role"] == "assistant"
+    assert thinking in assistant["content"]  # unknown block types are preserved
 
 
 def test_page_digest_render_lists_elements() -> None:

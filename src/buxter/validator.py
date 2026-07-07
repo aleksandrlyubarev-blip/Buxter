@@ -31,11 +31,14 @@ class Check:
 @dataclass
 class MeshReport:
     path: Path
-    ok: bool
     checks: list[Check] = field(default_factory=list)
     bbox: tuple[float, float, float] = (0.0, 0.0, 0.0)
     volume: float | None = None
     min_thickness: float | None = None
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.checks) and all(check.ok for check in self.checks)
 
 
 def parse_bbox(spec: str) -> tuple[float, float, float]:
@@ -56,6 +59,15 @@ def _load_trimesh():
     return trimesh
 
 
+def load_mesh(path: Path):
+    """Load a mesh file with consistent errors (RuntimeError, never a traceback)."""
+    trimesh = _load_trimesh()
+    try:
+        return trimesh.load(path, force="mesh")
+    except Exception as exc:
+        raise RuntimeError(f"Cannot load mesh {path}: {exc}") from exc
+
+
 def validate_mesh(
     path: Path,
     *,
@@ -69,15 +81,17 @@ def validate_mesh(
     trimesh = _load_trimesh()
 
     checks: list[Check] = []
-    mesh = trimesh.load(path, force="mesh")
-    bbox = tuple(float(v) for v in mesh.bounding_box.extents)
+    mesh = load_mesh(path)
 
-    non_empty = len(mesh.faces) > 0
+    # Order matters: an empty mesh has bounds=None, so every geometric property
+    # is read only behind the non_empty guard.
+    non_empty = len(getattr(mesh, "faces", ())) > 0
     checks.append(
-        Check("non-empty", non_empty, f"{len(mesh.faces)} triangles")
+        Check("non-empty", non_empty, f"{len(mesh.faces) if non_empty else 0} triangles")
     )
+    bbox = tuple(float(v) for v in mesh.extents) if non_empty else (0.0, 0.0, 0.0)
 
-    watertight = bool(mesh.is_watertight)
+    watertight = bool(mesh.is_watertight) if non_empty else False
     checks.append(
         Check(
             "watertight",
@@ -85,11 +99,12 @@ def validate_mesh(
             "closed manifold" if watertight else "open edges — slicer may misread it",
         )
     )
+    winding = bool(mesh.is_winding_consistent) if non_empty else False
     checks.append(
         Check(
             "winding",
-            bool(mesh.is_winding_consistent),
-            "normals consistent" if mesh.is_winding_consistent else "flipped normals present",
+            winding,
+            "normals consistent" if winding else "flipped normals present",
         )
     )
 
@@ -139,13 +154,11 @@ def validate_mesh(
                 )
             )
         else:
-            checks.append(
-                Check("min-wall", False, "skipped: mesh not watertight")
-            )
+            reason = "mesh is empty" if not non_empty else "mesh not watertight"
+            checks.append(Check("min-wall", False, f"skipped: {reason}"))
 
     return MeshReport(
         path=path,
-        ok=all(check.ok for check in checks),
         checks=checks,
         bbox=bbox,  # type: ignore[arg-type]
         volume=volume,
@@ -153,4 +166,4 @@ def validate_mesh(
     )
 
 
-__all__ = ["Check", "MeshReport", "parse_bbox", "validate_mesh"]
+__all__ = ["Check", "MeshReport", "load_mesh", "parse_bbox", "validate_mesh"]

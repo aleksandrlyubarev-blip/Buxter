@@ -90,13 +90,13 @@ def draw(
 @click.argument("stl", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 def inspect(stl: Path) -> None:
     """Print bounding box, volume and triangle count of an STL file."""
-    try:
-        import trimesh
-    except ImportError as exc:
-        console.print("[red]trimesh is not installed. pip install buxter[dev][/]")
-        raise SystemExit(1) from exc
+    from .validator import load_mesh
 
-    mesh = trimesh.load(stl, force="mesh")
+    try:
+        mesh = load_mesh(stl)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
     bbox = mesh.bounding_box.extents
     console.print(f"[bold]{stl}[/]")
     console.print(f"  triangles : {len(mesh.faces)}")
@@ -195,8 +195,8 @@ def validate(
     """Printability gate: watertight, volume, bbox vs spec, min wall thickness."""
     from .validator import parse_bbox, validate_mesh
 
-    expected = parse_bbox(expect_bbox) if expect_bbox else None
     try:
+        expected = parse_bbox(expect_bbox) if expect_bbox else None
         report = validate_mesh(
             mesh,
             min_wall=min_wall,
@@ -204,7 +204,7 @@ def validate(
             bbox_tol=bbox_tol,
             wall_samples=wall_samples,
         )
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         console.print(f"[red]{exc}[/]")
         raise SystemExit(1) from exc
 
@@ -219,6 +219,36 @@ def validate(
         raise SystemExit(1)
 
 
+_MESH_SUFFIXES = {".stl", ".3mf", ".obj", ".ply"}
+
+
+def _gate_mesh_attachments(attach: tuple[Path, ...]) -> None:
+    """Run the printability gate on mesh attachments before they leave the machine."""
+    meshes = [p for p in attach if p.suffix.lower() in _MESH_SUFFIXES]
+    if not meshes:
+        return
+    try:
+        import trimesh  # noqa: F401 — availability probe for the optional gate
+    except ImportError:
+        console.print("[yellow]validate extra not installed — skipping printability gate[/]")
+        return
+    from .validator import validate_mesh
+    for path in meshes:
+        try:
+            report = validate_mesh(path)
+        except RuntimeError as exc:
+            console.print(f"[red]✗ {exc}[/]")
+            raise SystemExit(1) from exc
+        if not report.ok:
+            failed = ", ".join(check.name for check in report.checks if not check.ok)
+            console.print(
+                f"[red]✗ {path} fails the printability gate ({failed}). "
+                f"Fix the model or pass --no-validate to upload anyway.[/]"
+            )
+            raise SystemExit(1)
+        console.print(f"[dim]✓ gate: {path.name} printable[/]")
+
+
 @cli.command()
 @click.option("--task", "-t", required=True, help="What to do in the browser, in plain text.")
 @click.option("--url", default=None, help="Start URL for the web application.")
@@ -226,8 +256,17 @@ def validate(
               type=click.Path(exists=True, dir_okay=False, path_type=Path),
               help="File the agent is allowed to upload (repeatable), e.g. out/out.stl.")
 @click.option("--headed", is_flag=True, help="Show the browser window (default: headless).")
+@click.option("--no-validate", is_flag=True,
+              help="Skip the printability gate on mesh attachments before upload.")
 @click.option("--model", default=None, help="Model alias: opus / sonnet / haiku, or full id.")
-def web(task: str, url: str | None, attach: tuple[Path, ...], headed: bool, model: str | None) -> None:
+def web(
+    task: str,
+    url: str | None,
+    attach: tuple[Path, ...],
+    headed: bool,
+    no_validate: bool,
+    model: str | None,
+) -> None:
     """Drive a web app with the CAD artifacts: upload, set parameters, run."""
     from .browser import PlaywrightSession
     from .web_agent import WebStep, run_web_task
@@ -235,20 +274,31 @@ def web(task: str, url: str | None, attach: tuple[Path, ...], headed: bool, mode
     settings = load_settings()
     if model:
         settings.model = model
+    if not settings.anthropic_api_key:
+        console.print("[red]ANTHROPIC_API_KEY is not set.[/]")
+        raise SystemExit(1)
 
+    if not no_validate:
+        _gate_mesh_attachments(attach)
+
+    headless = settings.web_headless and not headed
     console.print(
         f"[bold cyan]Buxter web[/] model=[green]{settings.model}[/] "
-        f"headless={not headed} attachments={[p.name for p in attach]}"
+        f"headless={headless} attachments={[p.name for p in attach]}"
     )
 
     def show(step: WebStep) -> None:
         console.print(f"[yellow]→ {step.tool}[/] {step.input} [dim]{step.result[:120]}[/]")
 
-    session = PlaywrightSession(
-        headless=not headed,
-        step_timeout_ms=settings.web_step_timeout_ms,
-        chromium_path=settings.web_chromium_path,
-    )
+    try:
+        session = PlaywrightSession(
+            headless=headless,
+            step_timeout_ms=settings.web_step_timeout_ms,
+            chromium_path=settings.web_chromium_path,
+        )
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
     try:
         report = run_web_task(
             task,

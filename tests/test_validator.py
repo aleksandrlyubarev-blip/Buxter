@@ -67,6 +67,29 @@ def test_open_mesh_fails_watertight_and_skips_wall(tmp_path: Path) -> None:
     assert "skipped" in _check(report, "volume").detail
 
 
+def test_empty_stl_fails_cleanly(tmp_path: Path) -> None:
+    path = tmp_path / "empty.stl"
+    path.write_text("solid buxter\nendsolid buxter\n")
+
+    report = validate_mesh(path, min_wall=1.6)
+
+    assert not report.ok
+    assert not _check(report, "non-empty").ok
+    assert "empty" in _check(report, "min-wall").detail
+    assert report.bbox == (0.0, 0.0, 0.0)
+
+
+def test_garbage_file_fails_gracefully(tmp_path: Path) -> None:
+    """Corrupt bytes must yield a failing report or a RuntimeError — never a raw traceback."""
+    path = tmp_path / "garbage.stl"
+    path.write_bytes(b"\x00\x01\x02 not a mesh at all")
+    try:
+        report = validate_mesh(path)
+    except RuntimeError:
+        return
+    assert not report.ok
+
+
 def test_parse_bbox_variants() -> None:
     assert parse_bbox("60x40x8") == (60.0, 40.0, 8.0)
     assert parse_bbox("60 × 40 × 8.5") == (60.0, 40.0, 8.5)

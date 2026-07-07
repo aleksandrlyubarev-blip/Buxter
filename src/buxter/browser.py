@@ -20,10 +20,16 @@ from typing import Any, Protocol
 _MAX_TEXT_CHARS = 6000
 
 # Stamps data-buxter-id on interactive elements and returns their digest.
+# Previously stamped ids are cleared first: after a DOM mutation without
+# navigation, a hidden element would otherwise keep its old id while a new
+# element gets the same number, and click() would target the stale node.
 # Hidden file inputs are kept: they are routinely display:none behind styled
 # upload buttons, and set_input_files works on them regardless.
 _ANNOTATE_JS = """
 () => {
+  for (const el of document.querySelectorAll('[data-buxter-id]')) {
+    el.removeAttribute('data-buxter-id');
+  }
   const selector = 'a, button, input, select, textarea, [role="button"], [onclick]';
   const visible = (el) => {
     if (el.tagName === 'INPUT' && el.type === 'file') return true;
@@ -162,7 +168,7 @@ class PlaywrightSession:
         return self._page.screenshot(type="png")
 
     def wait(self, seconds: float) -> str:
-        seconds = min(float(seconds), 15.0)
+        seconds = max(0.0, min(float(seconds), 15.0))
         self._page.wait_for_timeout(seconds * 1000)
         return f"waited {seconds:.1f}s"
 
