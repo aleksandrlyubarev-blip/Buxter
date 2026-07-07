@@ -10,7 +10,7 @@ MODEL_ALIASES: dict[str, str] = {
     "haiku": "claude-haiku-4-5-20251001",
 }
 
-BackendName = Literal["freecad", "fusion"]
+BackendName = Literal["freecad", "fusion", "build123d"]
 FusionExecMode = Literal["dryrun", "subprocess"]
 
 

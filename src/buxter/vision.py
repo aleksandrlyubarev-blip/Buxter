@@ -8,6 +8,10 @@ from anthropic import Anthropic
 from .config import Settings, resolve_model
 from .llm import image_block, make_client, response_text
 from .prompts import (
+    B123D_RETRY_TEMPLATE,
+    B123D_SYSTEM_PROMPT,
+    B123D_USER_TEMPLATE_NO_PHOTO,
+    B123D_USER_TEMPLATE_WITH_PHOTO,
     FUSION_RETRY_TEMPLATE,
     FUSION_SYSTEM_PROMPT,
     FUSION_USER_TEMPLATE_NO_PHOTO,
@@ -28,7 +32,7 @@ _MEDIA_TYPES = {
     ".gif": "image/gif",
 }
 
-BackendName = Literal["freecad", "fusion"]
+BackendName = Literal["freecad", "fusion", "build123d"]
 
 _PROMPT_BUNDLE: dict[BackendName, dict[str, str]] = {
     "freecad": {
@@ -42,6 +46,12 @@ _PROMPT_BUNDLE: dict[BackendName, dict[str, str]] = {
         "no_photo": FUSION_USER_TEMPLATE_NO_PHOTO,
         "with_photo": FUSION_USER_TEMPLATE_WITH_PHOTO,
         "retry": FUSION_RETRY_TEMPLATE,
+    },
+    "build123d": {
+        "system": B123D_SYSTEM_PROMPT,
+        "no_photo": B123D_USER_TEMPLATE_NO_PHOTO,
+        "with_photo": B123D_USER_TEMPLATE_WITH_PHOTO,
+        "retry": B123D_RETRY_TEMPLATE,
     },
 }
 

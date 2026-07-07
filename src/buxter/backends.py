@@ -5,8 +5,9 @@ from typing import Literal, Protocol
 from .config import Settings
 from .runner import RunResult, run_freecad_script
 from .fusion_runner import FusionRunResult, run_fusion_script
+from .b123d_runner import run_build123d_script
 
-BackendName = Literal["freecad", "fusion"]
+BackendName = Literal["freecad", "fusion", "build123d"]
 
 
 @dataclass
@@ -86,9 +87,32 @@ class FusionBackend:
         )
 
 
+class Build123dBackend:
+    name: BackendName = "build123d"
+
+    def run(self, script: str, out_dir: Path, settings: Settings) -> BackendArtifacts:
+        result: RunResult = run_build123d_script(
+            script,
+            out_dir,
+            timeout=settings.run_timeout,
+        )
+        return BackendArtifacts(
+            backend=self.name,
+            script_path=result.script_path,
+            stl_path=result.stl_path,
+            step_path=result.step_path if result.step_path.exists() else None,
+            extra_path=None,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            ok=result.ok,
+        )
+
+
 _BACKENDS: dict[BackendName, Backend] = {
     "freecad": FreeCADBackend(),
     "fusion": FusionBackend(),
+    "build123d": Build123dBackend(),
 }
 
 

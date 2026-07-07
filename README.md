@@ -10,7 +10,7 @@
 - `buxter verify` — vision-самопроверка (паттерн CADCodeVerify): 4 рендера + kernel-метрики → судья-Claude отвечает на да/нет-вопросы из ТЗ и предлагает правку; `buxter draw --self-check` замыкает цикл автоматически (максимум 2 раунда).
 - `buxter retry` — повторная генерация с правками, используя прошлый скрипт как контекст.
 - `buxter web` — browser-слой: Claude управляет Chromium (Playwright), загружает STL/STEP в веб-инструмент, выставляет параметры, запускает расчёт.
-- `--backend freecad|fusion` — переключение между движками.
+- `--backend freecad|fusion|build123d` — переключение между движками. **build123d** — единственный полностью pip-устанавливаемый headless-путь (`pip install -e ".[build123d]"`), без внешних бинарей: идеально для CI.
 - Jupyter notebook `notebooks/drawing_playground.ipynb` для интерактивных итераций.
 
 ## Установка
@@ -176,6 +176,7 @@ photo + description ─▶ buxter.vision ─▶ Claude (multimodal)
 | `src/buxter/backends.py`       | Диспетчер бэкендов (`freecad`, `fusion`)           |
 | `src/buxter/runner.py`         | Запуск скрипта в `freecadcmd`                      |
 | `src/buxter/fusion_runner.py`  | Запуск/эмиссия скрипта Fusion 360                  |
+| `src/buxter/b123d_runner.py`   | Запуск build123d-скрипта (python subprocess)       |
 | `src/buxter/exporter.py`       | Валидация артефактов (файловый уровень)             |
 | `src/buxter/validator.py`      | Printability-gate: watertight/bbox/min-wall (trimesh) |
 | `src/buxter/render.py`         | Headless-рендер 4 видов (f3d или matplotlib)        |

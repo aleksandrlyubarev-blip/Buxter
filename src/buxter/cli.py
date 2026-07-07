@@ -12,7 +12,7 @@ from .vision import generate_script
 console = Console()
 log = get_logger("buxter")
 
-_BACKEND_CHOICE = click.Choice(["freecad", "fusion"], case_sensitive=False)
+_BACKEND_CHOICE = click.Choice(["freecad", "fusion", "build123d"], case_sensitive=False)
 
 
 @click.group()
@@ -173,20 +173,20 @@ def retry(
     if model:
         settings.model = model
 
-    fusion_script = output / "_gen_fusion.py"
-    freecad_script = output / "_gen.py"
+    script_by_backend: dict[str, Path] = {
+        "fusion": output / "_gen_fusion.py",
+        "build123d": output / "_gen_b123d.py",
+        "freecad": output / "_gen.py",
+    }
     if backend:
         backend_name: BackendName = backend.lower()  # type: ignore[assignment]
-    elif fusion_script.exists() and not freecad_script.exists():
-        backend_name = "fusion"
-    elif freecad_script.exists():
-        backend_name = "freecad"
     else:
-        backend_name = settings.backend
+        detected = [name for name, path in script_by_backend.items() if path.exists()]
+        backend_name = detected[0] if len(detected) == 1 else settings.backend
     settings.backend = backend_name
     backend_impl = get_backend(backend_name)
 
-    prior_script_path = fusion_script if backend_name == "fusion" else freecad_script
+    prior_script_path = script_by_backend[backend_name]
     run_log_path = output / "run.log"
     if not prior_script_path.exists():
         console.print(f"[red]No prior script at {prior_script_path}. Run `buxter draw` first.[/]")
