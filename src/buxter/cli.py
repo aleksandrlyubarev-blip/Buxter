@@ -359,6 +359,47 @@ def fit(mesh_a: Path, mesh_b: Path, clearance: float, samples: int) -> None:
         raise SystemExit(1)
 
 
+@cli.command(name="slice")
+@click.argument("mesh", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--output", "-o", type=click.Path(dir_okay=False, path_type=Path), default=None,
+              help="G-code output path (default: alongside the mesh).")
+@click.option("--profile", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              default=None, help="PrusaSlicer config bundle (.ini) exported from the GUI.")
+@click.option("--max-minutes", type=float, default=None,
+              help="Fail if the estimated print time exceeds this many minutes.")
+def slice_cmd(
+    mesh: Path,
+    output: Path | None,
+    profile: Path | None,
+    max_minutes: float | None,
+) -> None:
+    """Slice headless via PrusaSlicer; the G-code footer supplies the metrics."""
+    import os
+
+    from .slicer import slice_mesh
+
+    console.print(f"[yellow]→ slicing {mesh.name}…[/]")
+    try:
+        report = slice_mesh(
+            mesh,
+            output,
+            profile=profile,
+            slicer_cmd=os.environ.get("PRUSA_SLICER_CMD"),
+        )
+    except RuntimeError as exc:
+        console.print(f"[red]✗ {exc}[/]")
+        raise SystemExit(1) from exc
+
+    console.print(f"[bold green]✓ G-code:[/] {report.gcode_path}")
+    console.print(f"  print time : {report.print_time or 'n/a'}")
+    console.print(f"  filament   : {report.filament_mm:.0f} mm ({report.filament_cm3:.2f} cm³)")
+    if max_minutes is not None and report.print_time_seconds > max_minutes * 60:
+        console.print(
+            f"[bold red]✗ estimated time exceeds the {max_minutes:g} min budget[/]"
+        )
+        raise SystemExit(1)
+
+
 _MESH_SUFFIXES = {".stl", ".3mf", ".obj", ".ply"}
 
 

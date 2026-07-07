@@ -10,6 +10,7 @@
 - `buxter verify` — vision-самопроверка (паттерн CADCodeVerify): 4 рендера + kernel-метрики → судья-Claude отвечает на да/нет-вопросы из ТЗ и предлагает правку; `buxter draw --self-check` замыкает цикл автоматически (максимум 2 раунда).
 - `buxter diff` — насколько два STL отличаются (сэмплированный Hausdorff, дельта объёма) — проверка, что ревизия изменила только то, что просили.
 - `buxter fit` — проверка сопряжений: интерференция (manifold-boolean) и минимальный зазор между двумя деталями.
+- `buxter slice` — финальный gate: headless-слайсинг через PrusaSlicer CLI, метрики из футера G-code (время печати, филамент), `--max-minutes` как бюджет. G-code генерирует только слайсер, никогда LLM.
 - `buxter retry` — повторная генерация с правками, используя прошлый скрипт как контекст.
 - `buxter web` — browser-слой: Claude управляет Chromium (Playwright), загружает STL/STEP в веб-инструмент, выставляет параметры, запускает расчёт.
 - `--backend freecad|fusion|build123d` — переключение между движками. **build123d** — единственный полностью pip-устанавливаемый headless-путь (`pip install -e ".[build123d]"`), без внешних бинарей: идеально для CI.
@@ -183,6 +184,7 @@ photo + description ─▶ buxter.vision ─▶ Claude (multimodal)
 | `src/buxter/validator.py`      | Printability-gate: watertight/bbox/min-wall (trimesh) |
 | `src/buxter/render.py`         | Headless-рендер 4 видов (f3d или matplotlib)        |
 | `src/buxter/meshtools.py`      | Hausdorff-diff и fit-check сопряжений               |
+| `src/buxter/slicer.py`         | PrusaSlicer CLI: слайсинг + метрики из G-code       |
 | `src/buxter/verify_agent.py`   | Geometry Judge: вопросы из ТЗ → ответы по рендерам  |
 | `src/buxter/llm.py`            | Общий bootstrap Anthropic-клиента                    |
 | `src/buxter/browser.py`        | Playwright-сессия: DOM-дайджест, клики, upload      |
