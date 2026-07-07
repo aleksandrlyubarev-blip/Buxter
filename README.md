@@ -7,6 +7,7 @@
 - `buxter draw` — полный pipeline: фото + описание → STL/STEP.
 - `buxter inspect` — bbox/volume/количество треугольников STL.
 - `buxter validate` — printability-gate: watertight, volume, bbox против спецификации, минимальная толщина стенки (ray-sampling по экспортированному mesh).
+- `buxter verify` — vision-самопроверка (паттерн CADCodeVerify): 4 рендера + kernel-метрики → судья-Claude отвечает на да/нет-вопросы из ТЗ и предлагает правку; `buxter draw --self-check` замыкает цикл автоматически (максимум 2 раунда).
 - `buxter retry` — повторная генерация с правками, используя прошлый скрипт как контекст.
 - `buxter web` — browser-слой: Claude управляет Chromium (Playwright), загружает STL/STEP в веб-инструмент, выставляет параметры, запускает расчёт.
 - `--backend freecad|fusion` — переключение между движками.
@@ -177,6 +178,9 @@ photo + description ─▶ buxter.vision ─▶ Claude (multimodal)
 | `src/buxter/fusion_runner.py`  | Запуск/эмиссия скрипта Fusion 360                  |
 | `src/buxter/exporter.py`       | Валидация артефактов (файловый уровень)             |
 | `src/buxter/validator.py`      | Printability-gate: watertight/bbox/min-wall (trimesh) |
+| `src/buxter/render.py`         | Headless-рендер 4 видов (f3d или matplotlib)        |
+| `src/buxter/verify_agent.py`   | Geometry Judge: вопросы из ТЗ → ответы по рендерам  |
+| `src/buxter/llm.py`            | Общий bootstrap Anthropic-клиента                    |
 | `src/buxter/browser.py`        | Playwright-сессия: DOM-дайджест, клики, upload      |
 | `src/buxter/web_agent.py`      | Web Operator Agent: tool-use loop поверх браузера   |
 | `src/buxter/bootstrap.py`      | Поиск бинарей (`freecadcmd`, Fusion 360)           |

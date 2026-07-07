@@ -30,12 +30,16 @@ def cli() -> None:
 @click.option("--model", default=None, help="Model alias: opus / sonnet / haiku, or full id.")
 @click.option("--backend", type=_BACKEND_CHOICE, default=None,
               help="Modeling backend (default: $BUXTER_BACKEND or freecad).")
+@click.option("--self-check", is_flag=True,
+              help="Render the result and let a judge verify it against the "
+                   "description, regenerating on failure (max 2 rounds).")
 def draw(
     photo: Path | None,
     description: str,
     output: Path | None,
     model: str | None,
     backend: str | None,
+    self_check: bool,
 ) -> None:
     """Generate STL + STEP from a description (and optional photo)."""
     settings = load_settings()
@@ -78,12 +82,56 @@ def draw(
         console.print(f"[red]✗ {exc}[/]")
         raise SystemExit(1) from exc
 
-    console.print(f"[bold green]✓ STL:[/]  {validated.stl}  ({validated.stl.stat().st_size} bytes)")
-    if validated.step:
-        console.print(f"[bold green]✓ STEP:[/] {validated.step}")
+    if self_check:
+        artifacts = _self_check_loop(
+            description, artifacts, backend_impl, out_dir, settings
+        )
+
+    console.print(f"[bold green]✓ STL:[/]  {artifacts.stl_path}  ({artifacts.stl_path.stat().st_size} bytes)")
+    if artifacts.step_path:
+        console.print(f"[bold green]✓ STEP:[/] {artifacts.step_path}")
     if artifacts.extra_path:
         console.print(f"[bold green]✓ F3D:[/]  {artifacts.extra_path}")
     console.print(f"[dim]Script saved to {artifacts.script_path}[/]")
+
+
+def _print_verify_report(report) -> None:
+    for item in report.questions:
+        mark, color = ("✓", "green") if item.answer == "yes" else ("✗", "red")
+        console.print(f"  [{color}]{mark}[/] {item.question} — {item.answer}"
+                      + (f" [dim]({item.note})[/]" if item.note else ""))
+
+
+def _self_check_loop(description, artifacts, backend_impl, out_dir, settings):
+    """CADCodeVerify loop: judge the render, regenerate on failure, max 2 rounds."""
+    from .verify_agent import MAX_SELF_CHECK_ROUNDS, verify_model
+
+    for round_no in range(1, MAX_SELF_CHECK_ROUNDS + 1):
+        console.print(f"[yellow]→ self-check round {round_no}: rendering + judging…[/]")
+        report = verify_model(artifacts.stl_path, description, settings=settings)
+        _print_verify_report(report)
+        if report.passed:
+            console.print("[bold green]✓ self-check passed[/]")
+            return artifacts
+        if round_no == MAX_SELF_CHECK_ROUNDS or not report.revision:
+            console.print("[red]✗ self-check failed; keeping last artifacts.[/]")
+            console.print(f"[dim]suggested revision: {report.revision or '(none)'}[/]")
+            return artifacts
+
+        console.print(f"[yellow]→ regenerating with revision:[/] {report.revision}")
+        prior_script = artifacts.script_path.read_text(encoding="utf-8")
+        result = generate_script(
+            report.revision,
+            settings=settings,
+            prior_script=prior_script,
+            backend=backend_impl.name,
+        )
+        candidate = backend_impl.run(result.script, out_dir, settings)
+        if not candidate.ok:
+            console.print("[red]✗ regeneration failed to build; keeping previous model.[/]")
+            return artifacts
+        artifacts = candidate
+    return artifacts
 
 
 @cli.command()
@@ -216,6 +264,38 @@ def validate(
         console.print("[bold green]✓ printable[/]")
     else:
         console.print("[bold red]✗ validation failed — fix the model before slicing/upload[/]")
+        raise SystemExit(1)
+
+
+@cli.command()
+@click.argument("mesh", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--description", "-d", required=True,
+              help="The original design intent to judge the geometry against.")
+@click.option("--model", default=None, help="Model alias: opus / sonnet / haiku, or full id.")
+def verify(mesh: Path, description: str, model: str | None) -> None:
+    """Vision self-check: render the mesh and judge it against the description."""
+    from .verify_agent import verify_model
+
+    settings = load_settings()
+    if model:
+        settings.model = model
+
+    console.print(f"[yellow]→ rendering {mesh.name} and judging against the description…[/]")
+    try:
+        report = verify_model(mesh, description, settings=settings)
+    except (RuntimeError, ValueError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
+
+    console.print(f"[bold]{mesh}[/]")
+    console.print(f"[dim]{report.metrics}[/]")
+    _print_verify_report(report)
+    if report.passed:
+        console.print("[bold green]✓ geometry matches the description[/]")
+    else:
+        console.print("[bold red]✗ geometry does not match the description[/]")
+        if report.revision:
+            console.print(f"[yellow]suggested revision:[/] {report.revision}")
         raise SystemExit(1)
 
 

@@ -27,10 +27,16 @@ dev = [
     "trimesh>=4.0",
     "numpy-stl>=3.1",
     "rtree>=1.0",
+    "matplotlib>=3.8",
 ]
 validate = [
     "trimesh>=4.0",
     "rtree>=1.0",
+]
+verify = [
+    "trimesh>=4.0",
+    "rtree>=1.0",
+    "matplotlib>=3.8",
 ]
 web = [
     "playwright>=1.44",
