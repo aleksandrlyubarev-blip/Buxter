@@ -13,3 +13,7 @@ dist/
 *.step
 !samples/*.stl
 !samples/*.step
+
+# generated drawings (electronics drawing subproject)
+buxter_mcp_electronics_drawing/*.dxf
+buxter_mcp_electronics_drawing/out/
