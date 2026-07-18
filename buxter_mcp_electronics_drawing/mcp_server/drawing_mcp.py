@@ -1,170 +1,264 @@
-"""Fable-phase MCP server stub for the electronics drawing generator.
+"""Production MCP server for electronics technical drawings.
 
-Minimal JSON-RPC 2.0 loop over stdio implementing just enough of the MCP
-contract for a client to discover and call the generator:
+Built on the official `mcp` Python SDK (stdio transport, lowlevel Server
+API). Exposes six tools over the standard MCP lifecycle
+(`initialize` → `tools/list` → `tools/call`):
 
-    initialize → tools/list → tools/call(generate_inspection_drawing)
+    generate_assembly_drawing      spec → assembly DXF + .spec.json sidecar
+    generate_inspection_drawing    spec → inspection DXF (balloons, critical dims)
+    generate_process_sheet         operations → process-sheet DXF
+    add_gdt_and_dimensions         annotate an existing sandbox DXF
+    validate_drawing_for_production structured production-readiness report
+    sync_with_simulation           diff vs sidecar, bump revision, regenerate
 
-Deliberately a stub: no sessions, no streaming, no cancellation, no
-notifications. The Codex phase replaces this with a full production MCP
-server (official SDK, complete error taxonomy, validation, safety layer);
-the tool schemas below are the contract it must keep.
+Contracts and guarantees:
 
-Safety already enforced here:
-- output is confined to OUTPUT_DIR (env DRAWING_MCP_OUTPUT_DIR or ./out);
-- the filename is a bare name — separators and traversal are rejected;
-- spec validation errors come back as tool errors, never as crashes.
+- Input is validated against the strict JSON Schemas in :mod:`.schemas`
+  (``additionalProperties: false``) before any code runs; the SDK's own
+  input validation is disabled so every failure surfaces as a
+  deterministic ``SCHEMA_ERROR:`` message.
+- All file access goes through :class:`.sandbox.Sandbox`: bare names only,
+  absolute paths / ``..`` / separators / symlink escapes are refused with
+  ``PATH_ERROR:``.
+- Error taxonomy (stable prefixes, stable text for identical input):
+  ``SCHEMA_ERROR`` | ``SPEC_ERROR`` | ``PATH_ERROR`` | ``FILE_NOT_FOUND``
+  | ``DRAWING_ERROR`` | ``UNKNOWN_TOOL`` | ``INTERNAL_ERROR``.
+- Success payloads are JSON with sorted keys and sandbox-relative file
+  names only.
 
-Run:  python -m mcp_server.drawing_mcp
+Run:  DRAWING_MCP_OUTPUT_DIR=./out python -m mcp_server.drawing_mcp
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
-from .drawing_generator import AssemblySpec, SpecError, generate_drawing
+import jsonschema
+import mcp.types as types
+from mcp.server.lowlevel import Server
+from mcp.server.stdio import stdio_server
 
-PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "buxter-electronics-drawing", "version": "0.1.0-fable"}
+from .drawing_generator import (
+    AssemblySpec,
+    DrawingError,
+    ProcessSheetSpec,
+    SpecError,
+    annotate_drawing,
+    bump_revision,
+    diff_specs,
+    generate_drawing,
+    generate_process_sheet,
+    spec_to_dict,
+    validate_drawing,
+)
+from .sandbox import PathError, Sandbox
+from .schemas import TOOL_DEFINITIONS, TOOL_SCHEMAS
 
-OUTPUT_DIR = Path(os.environ.get("DRAWING_MCP_OUTPUT_DIR", "./out")).resolve()
+SERVER_NAME = "buxter-electronics-drawing"
+SERVER_VERSION = "1.0.0"
 
-SPEC_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "name": {"type": "string"},
-        "simulation_id": {"type": "string"},
-        "board": {
-            "type": "object",
-            "properties": {
-                "width": {"type": "number"},
-                "height": {"type": "number"},
-                "thickness": {"type": "number"},
-            },
-            "required": ["width", "height", "thickness"],
-        },
-        "holes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "x": {"type": "number"},
-                    "y": {"type": "number"},
-                    "diameter": {"type": "number"},
-                    "tolerance": {"type": "string"},
-                    "critical": {"type": "boolean"},
-                    "label": {"type": "string"},
-                },
-                "required": ["x", "y", "diameter"],
-            },
-        },
-        "drawing_type": {"type": "string", "enum": ["ASSEMBLY", "INSPECTION", "FIXTURE"]},
-        "revision": {"type": "string"},
-        "general_tolerance": {"type": "string"},
-        "gdt_notes": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["name", "simulation_id", "board"],
-}
+_VALIDATOR_CLS = jsonschema.Draft202012Validator
 
-TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "generate_inspection_drawing",
-        "description": (
-            "Generate a DXF inspection/assembly drawing for an electronics "
-            "board or fixture from a machine-readable spec. Returns the "
-            "path of the written DXF inside the sandboxed output directory."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "spec": SPEC_SCHEMA,
-                "filename": {
-                    "type": "string",
-                    "description": "Bare output file name, e.g. 'assembly_a.dxf'.",
-                },
-            },
-            "required": ["spec", "filename"],
-        },
-    },
-]
+_sandbox: Sandbox | None = None
 
 
-def _safe_output_path(filename: str) -> Path:
-    name = Path(filename).name
-    if name != filename or name in ("", ".", ".."):
-        raise SpecError(f"Invalid filename {filename!r}: bare file names only.")
-    if not name.lower().endswith(".dxf"):
-        name += ".dxf"
-    return OUTPUT_DIR / name
+def _get_sandbox() -> Sandbox:
+    global _sandbox
+    if _sandbox is None:
+        _sandbox = Sandbox(Path(os.environ.get("DRAWING_MCP_OUTPUT_DIR", "./out")))
+    return _sandbox
 
 
-def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    if name != "generate_inspection_drawing":
-        return _tool_error(f"Unknown tool {name!r}")
-    try:
-        spec = AssemblySpec.from_dict(arguments["spec"])
-        path = generate_drawing(spec, _safe_output_path(arguments["filename"]))
-    except (SpecError, KeyError) as exc:
-        return _tool_error(str(exc))
+class ToolError(Exception):
+    """A deterministic, already-prefixed tool failure."""
+
+
+def _sidecar_name(dxf_name: str) -> str:
+    return dxf_name.removesuffix(".dxf") + ".spec.json"
+
+
+def _write_sidecar(sandbox: Sandbox, dxf_name: str, spec: AssemblySpec) -> str:
+    sidecar = sandbox.resolve(_sidecar_name(dxf_name), require_suffix=None)
+    sidecar.write_text(
+        json.dumps(spec_to_dict(spec), ensure_ascii=False, sort_keys=True, indent=2),
+        encoding="utf-8",
+    )
+    return sidecar.name
+
+
+# --- tool implementations -----------------------------------------------------
+
+
+def _generate(args: dict[str, Any], *, drawing_type: str) -> dict[str, Any]:
+    sandbox = _get_sandbox()
+    spec_dict = dict(args["spec"])
+    spec_dict["drawing_type"] = drawing_type
+    spec = AssemblySpec.from_dict(spec_dict)
+    path = sandbox.resolve(args["filename"])
+    generate_drawing(spec, path)
+    sidecar = _write_sidecar(sandbox, path.name, spec)
     return {
-        "content": [{"type": "text", "text": f"DXF written: {path}"}],
-        "isError": False,
+        "file": path.name,
+        "sidecar": sidecar,
+        "drawing_type": drawing_type,
+        "revision": spec.revision,
+        "holes": len(spec.holes),
     }
 
 
-def _tool_error(message: str) -> dict[str, Any]:
-    return {"content": [{"type": "text", "text": message}], "isError": True}
+def _process_sheet(args: dict[str, Any]) -> dict[str, Any]:
+    sandbox = _get_sandbox()
+    sheet = ProcessSheetSpec.from_dict(args["sheet"])
+    path = sandbox.resolve(args["filename"])
+    generate_process_sheet(sheet, path)
+    return {"file": path.name, "steps": len(sheet.steps), "revision": sheet.revision}
 
 
-def _handle(request: dict[str, Any]) -> dict[str, Any] | None:
-    method = request.get("method", "")
-    request_id = request.get("id")
-    if request_id is None:  # notification — nothing to answer in the stub
-        return None
+def _annotate(args: dict[str, Any]) -> dict[str, Any]:
+    sandbox = _get_sandbox()
+    path = sandbox.resolve(args["filename"], must_exist=True)
+    result = annotate_drawing(
+        path, list(args.get("gdt_notes", [])), list(args.get("dimensions", []))
+    )
+    return {"file": path.name, **result}
 
-    if method == "initialize":
-        result: dict[str, Any] = {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {"tools": {}},
-            "serverInfo": SERVER_INFO,
-        }
-    elif method == "tools/list":
-        result = {"tools": TOOLS}
-    elif method == "tools/call":
-        params = request.get("params") or {}
-        result = _call_tool(params.get("name", ""), params.get("arguments") or {})
-    else:
+
+def _validate(args: dict[str, Any]) -> dict[str, Any]:
+    sandbox = _get_sandbox()
+    path = sandbox.resolve(args["filename"], must_exist=True)
+    return {"file": path.name, **validate_drawing(path)}
+
+
+def _sync(args: dict[str, Any]) -> dict[str, Any]:
+    sandbox = _get_sandbox()
+    path = sandbox.resolve(args["filename"], must_exist=True)
+    sidecar_path = sandbox.resolve(_sidecar_name(path.name), require_suffix=None)
+    if not sidecar_path.is_file():
+        raise FileNotFoundError(
+            f"{sidecar_path.name!r} does not exist in the output sandbox — "
+            "the drawing was not generated by this server, sync is impossible."
+        )
+    try:
+        old = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ToolError(f"DRAWING_ERROR: corrupt sidecar {sidecar_path.name!r}: {exc}") from exc
+
+    new_dict = dict(args["spec"])
+    # sync updates content, never the drawing kind: the sidecar's type wins
+    new_dict["drawing_type"] = old.get("drawing_type", "INSPECTION")
+    new_canonical = spec_to_dict(AssemblySpec.from_dict(new_dict))
+
+    changes = diff_specs(old, new_canonical)
+    if not changes:
         return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": {"code": -32601, "message": f"Method not found: {method}"},
+            "file": path.name,
+            "revision": old.get("revision", "A"),
+            "changes": [],
+            "regenerated": False,
         }
-    return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    previous = old.get("revision", "A")
+    new_canonical["revision"] = bump_revision(previous)
+    spec = AssemblySpec.from_dict(new_canonical)
+    generate_drawing(spec, path)
+    _write_sidecar(sandbox, path.name, spec)
+    return {
+        "file": path.name,
+        "previous_revision": previous,
+        "revision": spec.revision,
+        "changes": changes,
+        "regenerated": True,
+    }
+
+
+_HANDLERS = {
+    "generate_assembly_drawing": lambda args: _generate(args, drawing_type="ASSEMBLY"),
+    "generate_inspection_drawing": lambda args: _generate(args, drawing_type="INSPECTION"),
+    "generate_process_sheet": _process_sheet,
+    "add_gdt_and_dimensions": _annotate,
+    "validate_drawing_for_production": _validate,
+    "sync_with_simulation": _sync,
+}
+
+
+def _dispatch(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    schema = TOOL_SCHEMAS.get(name)
+    if schema is None:
+        raise ToolError(
+            f"UNKNOWN_TOOL: {name!r}. Available: {', '.join(sorted(TOOL_SCHEMAS))}"
+        )
+    errors = sorted(
+        _VALIDATOR_CLS(schema).iter_errors(arguments), key=lambda e: list(e.absolute_path)
+    )
+    if errors:
+        first = errors[0]
+        where = "/".join(str(part) for part in first.absolute_path) or "<root>"
+        raise ToolError(f"SCHEMA_ERROR: {where}: {first.message}")
+    return _HANDLERS[name](arguments)
+
+
+# --- MCP wiring ---------------------------------------------------------------
+
+app: Server = Server(SERVER_NAME)
+
+
+@app.list_tools()
+async def list_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            name=tool["name"],
+            description=tool["description"],
+            inputSchema=tool["input_schema"],
+        )
+        for tool in TOOL_DEFINITIONS
+    ]
+
+
+def _error(text: str) -> types.CallToolResult:
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=text)], isError=True
+    )
+
+
+@app.call_tool(validate_input=False)  # own validation → deterministic SCHEMA_ERROR
+async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+    try:
+        payload = _dispatch(name, arguments or {})
+    except ToolError as exc:
+        return _error(str(exc))
+    except SpecError as exc:
+        return _error(f"SPEC_ERROR: {exc}")
+    except PathError as exc:
+        return _error(f"PATH_ERROR: {exc}")
+    except FileNotFoundError as exc:
+        return _error(f"FILE_NOT_FOUND: {exc}")
+    except DrawingError as exc:
+        return _error(f"DRAWING_ERROR: {exc}")
+    except Exception as exc:  # noqa: BLE001 - last-resort, keep the server alive
+        return _error(f"INTERNAL_ERROR: {type(exc).__name__}: {exc}")
+    return types.CallToolResult(
+        content=[
+            types.TextContent(
+                type="text",
+                text=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            )
+        ],
+        isError=False,
+    )
+
+
+async def _serve() -> None:
+    async with stdio_server() as (read_stream, write_stream):
+        await app.run(read_stream, write_stream, app.create_initialization_options())
 
 
 def main() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError:
-            response: dict[str, Any] | None = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32700, "message": "Parse error"},
-            }
-        else:
-            response = _handle(request)
-        if response is not None:
-            sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
+    _get_sandbox()  # fail fast on an unusable output directory
+    asyncio.run(_serve())
 
 
 if __name__ == "__main__":
