@@ -218,8 +218,10 @@ Read an artifact before overwriting it; preserve content you did not change.
   number. Cite sources as: [Лист S-101, PDF стр. 4, узел 3],
   [Лист S-502, таблица фундаментов], [Спецификация, раздел 03 30 00].
 - Do not count marks in legends, notes or typical details as instances;
-  count_tag does NOT exclude them — identify those zones (search for
-  LEGEND/ПРИМЕЧАНИЯ/ТИПОВОЙ, check schedules) and subtract explicitly.
+  count_tag does NOT exclude them by default. Identify those zones (search
+  for LEGEND/ПРИМЕЧАНИЯ/ТИПОВОЙ, check schedules), then repeat count_tag
+  with explicit exclude_regions. Do not perform an unaudited mental
+  subtraction when the tool can apply and report the exclusions.
 - Check for tag duplication between plans, sections and enlarged fragments.
 - Respect revisions; exclude superseded sheets from counts.
 - Never measure by scale when a numeric dimension exists on the drawing.

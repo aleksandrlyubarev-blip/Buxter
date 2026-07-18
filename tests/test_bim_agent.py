@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from buxter.bim_agent import BimReport, DocSession, run_bim_task
 from buxter.pdf_index import DrawingSetIndex, PageText, TextSpan
 
@@ -45,6 +47,32 @@ def _session(tmp_path: Path) -> DocSession:
     return DocSession([], tmp_path / "bim", index=index)
 
 
+def _physical_count_session(tmp_path: Path) -> DocSession:
+    index = DrawingSetIndex()
+    index.pages = [
+        PageText(
+            file="set.pdf", pdf_page=1, width=1000, height=700,
+            spans=[
+                _span("F1", 50, 50),      # legend
+                _span("F1", 300, 200),    # physical instances
+                _span("F1", 500, 300),
+                _span("F1", 700, 400),
+                _span("S-101", 920, 660),
+            ],
+            raw_text="FOUNDATION PLAN LEGEND F1 F1 F1 F1 S-101 " + "x" * 40,
+        ),
+        PageText(
+            file="set.pdf", pdf_page=2, width=1000, height=700,
+            spans=[_span("F1", 200, 200), _span("S-601", 920, 660)],
+            raw_text="FOUNDATION SCHEDULE F1 S-601 " + "x" * 40,
+        ),
+    ]
+    from buxter.pdf_index import detect_sheet_metadata
+
+    index.sheets = [detect_sheet_metadata(page) for page in index.pages]
+    return DocSession([], tmp_path / "bim", index=index)
+
+
 def test_happy_path_finish(settings, tmp_path: Path) -> None:
     session = _session(tmp_path)
     client = FakeClient([
@@ -67,6 +95,53 @@ def test_happy_path_finish(settings, tmp_path: Path) -> None:
     assert [step.tool for step in report.steps] == ["count_tag", "finish"]
     # The tag count made it into the model-visible tool result.
     assert "2 clustered instance(s)" in report.steps[0].result
+
+
+def test_agent_reports_physical_count_after_explicit_exclusions(
+    settings, tmp_path: Path,
+) -> None:
+    session = _physical_count_session(tmp_path)
+    exclusions = [
+        {
+            "file": "set.pdf", "page": 1,
+            "x0": 0, "top": 0, "x1": 200, "bottom": 150,
+            "reason": "legend",
+        },
+        {"file": "set.pdf", "page": 2, "reason": "foundation schedule"},
+    ]
+    client = FakeClient([
+        [_tool_use("count_tag", "t1", tag="F1")],
+        [_tool_use("count_tag", "t2", tag="F1", exclude_regions=exclusions)],
+        [_tool_use(
+            "finish", "t3",
+            answer="3 шт F1 (Calculated)", reliability="High",
+            sources=["Лист S-101, PDF стр. 1"], unresolved=[],
+        )],
+    ])
+
+    report = run_bim_task(
+        "Сколько физических фундаментов F1?",
+        settings=settings,
+        session=session,
+        client=client,
+    )
+
+    assert report.answer == "3 шт F1 (Calculated)"
+    assert "5 clustered instance(s)" in report.steps[0].result
+    assert "3 clustered instance(s)" in report.steps[1].result
+    assert "Excluded 2 raw hit(s)" in report.steps[1].result
+
+
+def test_count_tag_rejects_partial_exclusion_rectangle(tmp_path: Path) -> None:
+    session = _physical_count_session(tmp_path)
+
+    with pytest.raises(ValueError, match="all of x0/top/x1/bottom or none"):
+        session.count_tag(
+            "F1",
+            exclude_regions=[{
+                "file": "set.pdf", "page": 1, "x0": 0, "reason": "legend",
+            }],
+        )
 
 
 def test_registry_is_in_the_first_message(settings, tmp_path: Path) -> None:
