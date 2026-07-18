@@ -17,6 +17,7 @@ grade instead of free text.
 from __future__ import annotations
 
 import base64
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +31,7 @@ from .pdf_index import (
     DEFAULT_CLUSTER_RADIUS,
     DrawingSetIndex,
     cluster_occurrences,
+    exclude_zones,
     find_occurrences,
     index_drawing_set,
 )
@@ -84,8 +86,9 @@ BIM_TOOLS: list[dict[str, Any]] = [
             "Count probable instances of a mark/tag: occurrences are grouped "
             "into clusters by proximity (a tag split into fragments counts "
             "once). Returns per-page cluster counts and cluster coordinates. "
-            "Legends/notes/schedules are NOT excluded automatically — verify "
-            "and subtract them yourself via search_text/render_page."
+            "Legends/notes/schedules are NOT excluded automatically. First "
+            "identify them via search_text/render_page, then pass auditable "
+            "exclude_regions. A region without coordinates excludes its whole page."
         ),
         "input_schema": {
             "type": "object",
@@ -95,6 +98,27 @@ BIM_TOOLS: list[dict[str, Any]] = [
                 "page": {"type": "integer"},
                 "regex": {"type": "boolean", "default": False},
                 "cluster_radius": {"type": "number"},
+                "exclude_regions": {
+                    "type": "array",
+                    "description": (
+                        "Verified non-instance regions in top-left-origin PDF points. "
+                        "Provide all four coordinates for a rectangle, or omit all "
+                        "four to exclude the entire page. A reason is mandatory."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "file": {"type": "string"},
+                            "page": {"type": "integer"},
+                            "x0": {"type": "number"},
+                            "top": {"type": "number"},
+                            "x1": {"type": "number"},
+                            "bottom": {"type": "number"},
+                            "reason": {"type": "string"},
+                        },
+                        "required": ["file", "page", "reason"],
+                    },
+                },
             },
             "required": ["tag"],
         },
@@ -260,6 +284,7 @@ class DocSession:
         page: int | None = None,
         regex: bool = False,
         cluster_radius: float | None = None,
+        exclude_regions: list[dict[str, Any]] | None = None,
     ) -> str:
         pages = [
             p
@@ -267,11 +292,64 @@ class DocSession:
             if (file is None or p.file == file) and (page is None or p.pdf_page == page)
         ]
         try:
-            hits = find_occurrences(pages, tag, regex=regex)
+            raw_hits = find_occurrences(pages, tag, regex=regex)
         except re.error as exc:
             return f"Invalid regex {tag!r}: {exc}"
-        if not hits:
+        if not raw_hits:
             return f"No occurrences of {tag!r} in the selected scope."
+
+        zones: list[tuple[str, int, float, float, float, float]] = []
+        exclusion_labels: list[str] = []
+        for number, region in enumerate(exclude_regions or [], start=1):
+            region_file = str(region.get("file", ""))
+            try:
+                region_page = int(region["page"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"exclude_regions[{number}] requires an integer page"
+                ) from exc
+            reason = str(region.get("reason", "")).strip()
+            if not reason:
+                raise ValueError(f"exclude_regions[{number}] requires a reason")
+            record = self.index.page(region_file, region_page)
+            if record is None:
+                raise ValueError(
+                    f"exclude_regions[{number}] refers to unknown page "
+                    f"{region_page} in {region_file!r}"
+                )
+
+            coordinate_keys = ("x0", "top", "x1", "bottom")
+            supplied = [region.get(key) is not None for key in coordinate_keys]
+            if any(supplied) and not all(supplied):
+                raise ValueError(
+                    f"exclude_regions[{number}] must provide all of "
+                    "x0/top/x1/bottom or none"
+                )
+            if all(supplied):
+                x0, top, x1, bottom = (
+                    float(region[key]) for key in coordinate_keys
+                )
+            else:
+                x0, top, x1, bottom = 0.0, 0.0, record.width, record.height
+            if not all(math.isfinite(value) for value in (x0, top, x1, bottom)):
+                raise ValueError(
+                    f"exclude_regions[{number}] coordinates must be finite"
+                )
+            if not (
+                0 <= x0 < x1 <= record.width
+                and 0 <= top < bottom <= record.height
+            ):
+                raise ValueError(
+                    f"exclude_regions[{number}] is outside {region_file} "
+                    f"p.{region_page} bounds ({record.width:g}x{record.height:g})"
+                )
+            zones.append((region_file, region_page, x0, top, x1, bottom))
+            exclusion_labels.append(
+                f"- {region_file} p.{region_page} "
+                f"@({x0:g},{top:g})-({x1:g},{bottom:g}): {reason}"
+            )
+
+        hits = exclude_zones(raw_hits, zones)
         clusters = cluster_occurrences(hits, cluster_radius or DEFAULT_CLUSTER_RADIUS)
         per_page: dict[tuple[str, int], int] = {}
         for cluster in clusters:
@@ -279,8 +357,15 @@ class DocSession:
             per_page[key] = per_page.get(key, 0) + 1
         lines = [
             f"{len(clusters)} clustered instance(s) of {tag!r} "
-            f"from {len(hits)} raw hit(s). Per page:"
+            f"from {len(raw_hits)} raw hit(s)."
         ]
+        if zones:
+            lines.append(
+                f"Excluded {len(raw_hits) - len(hits)} raw hit(s) using "
+                f"{len(zones)} declared region(s):"
+            )
+            lines.extend(exclusion_labels)
+        lines.append("Per page:")
         for (hit_file, hit_page), count in sorted(per_page.items()):
             lines.append(f"- {hit_file} p.{hit_page}: {count}")
         lines.append("Cluster anchors:")
@@ -424,6 +509,7 @@ def _dispatch(
                         if args.get("cluster_radius") is not None
                         else None
                     ),
+                    exclude_regions=args.get("exclude_regions"),
                 ),
                 False,
             )
