@@ -268,5 +268,103 @@ def web(task: str, url: str | None, attach: tuple[Path, ...], headed: bool, mode
         raise SystemExit(1)
 
 
+@cli.group()
+def bim() -> None:
+    """Analyze a construction PDF drawing set (Relational Indexing Workflow)."""
+
+
+@bim.command("index")
+@click.argument("pdfs", nargs=-1, required=True,
+                type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--workdir", "-w", type=click.Path(file_okay=False, path_type=Path),
+              default=None, help="Artifact directory (default: $BUXTER_BIM_WORKDIR or ./bim).")
+def bim_index(pdfs: tuple[Path, ...], workdir: Path | None) -> None:
+    """Index the set: build drawings.md, artifact skeletons and the manifest."""
+    from .pdf_index import index_drawing_set, write_artifacts
+
+    settings = load_settings()
+    target = (workdir or settings.bim_workdir).resolve()
+
+    console.print(f"[bold cyan]Buxter bim[/] indexing {len(pdfs)} file(s) → {target}")
+    try:
+        index = index_drawing_set(list(pdfs))
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
+
+    written = write_artifacts(index, target, list(pdfs))
+    text_ok = sum(1 for sheet in index.sheets if sheet.has_text_layer)
+    ocr = len(index.sheets) - text_ok
+    console.print(
+        f"[green]✓[/] {len(index.sheets)} page(s): "
+        f"{text_ok} with text layer, {ocr} OCR/visual candidate(s)"
+    )
+    for error in index.errors:
+        console.print(f"[red]✗ {error}[/]")
+    for path in written:
+        console.print(f"[bold green]✓[/] {path}")
+
+
+@bim.command("ask")
+@click.argument("question")
+@click.option("--pdf", "-p", "pdfs", multiple=True,
+              type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="PDF file (repeatable). Default: the manifest written by `buxter bim index`.")
+@click.option("--workdir", "-w", type=click.Path(file_okay=False, path_type=Path),
+              default=None, help="Artifact directory (default: $BUXTER_BIM_WORKDIR or ./bim).")
+@click.option("--model", default=None, help="Model alias: opus / sonnet / haiku, or full id.")
+def bim_ask(question: str, pdfs: tuple[Path, ...], workdir: Path | None, model: str | None) -> None:
+    """Ask a quantity/spec question over the indexed drawing set."""
+    from .bim_agent import BimStep, DocSession, run_bim_task
+    from .pdf_index import load_manifest
+
+    settings = load_settings()
+    if model:
+        settings.model = model
+    target = (workdir or settings.bim_workdir).resolve()
+
+    pdf_paths = list(pdfs) or load_manifest(target)
+    if not pdf_paths:
+        console.print(
+            f"[red]No PDFs: pass --pdf or run `buxter bim index` first (workdir: {target}).[/]"
+        )
+        raise SystemExit(1)
+    missing = [path for path in pdf_paths if not path.exists()]
+    if missing:
+        console.print(f"[red]Manifest PDFs not found: {', '.join(map(str, missing))}[/]")
+        raise SystemExit(1)
+
+    console.print(
+        f"[bold cyan]Buxter bim[/] model=[green]{settings.model}[/] "
+        f"workdir={target} pdfs={[path.name for path in pdf_paths]}"
+    )
+
+    def show(step: BimStep) -> None:
+        console.print(f"[yellow]→ {step.tool}[/] {step.input} [dim]{step.result[:120]}[/]")
+
+    try:
+        session = DocSession(pdf_paths, target, render_dpi=settings.bim_render_dpi)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
+
+    report = run_bim_task(question, settings=settings, session=session, on_step=show)
+
+    color = "green" if report.success else "red"
+    mark = "✓" if report.success else "✗"
+    console.print(f"\n[bold {color}]{mark} Reliability: {report.reliability}[/]")
+    console.print(report.answer)
+    if report.sources:
+        console.print("\n[bold]Sources:[/]")
+        for source in report.sources:
+            console.print(f"  - {source}")
+    if report.unresolved:
+        console.print("\n[bold yellow]Unresolved:[/]")
+        for item in report.unresolved:
+            console.print(f"  - {item}")
+    if not report.success:
+        raise SystemExit(1)
+
+
 if __name__ == "__main__":
     cli()

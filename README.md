@@ -1,6 +1,6 @@
 # Buxter — CAD Agent
 
-Прототип **Modeling Agent** из архитектуры Buxter MAS. Берёт фотографию детали и текстовое описание, просит Claude сгенерировать параметрический CAD-скрипт и запускает его в выбранном бэкенде. Поддерживает **FreeCAD** (по умолчанию) и **Autodesk Fusion 360**. Дополняется **Web Operator Agent** — browser-слоем, который относит готовые артефакты в веб-инструменты (см. [docs/cad-browser-architecture.md](docs/cad-browser-architecture.md)).
+Прототип **Modeling Agent** из архитектуры Buxter MAS. Берёт фотографию детали и текстовое описание, просит Claude сгенерировать параметрический CAD-скрипт и запускает его в выбранном бэкенде. Поддерживает **FreeCAD** (по умолчанию) и **Autodesk Fusion 360**. Дополняется **Web Operator Agent** — browser-слоем, который относит готовые артефакты в веб-инструменты (см. [docs/cad-browser-architecture.md](docs/cad-browser-architecture.md)), и **BIM Analysis Agent** — анализом строительной PDF-документации по методологии Relational Indexing Workflow (см. [docs/bim-analysis-architecture.md](docs/bim-analysis-architecture.md)).
 
 ## Возможности
 
@@ -9,6 +9,7 @@
 - `buxter validate` — printability-gate: watertight, volume, bbox против спецификации, минимальная толщина стенки (ray-sampling по экспортированному mesh).
 - `buxter retry` — повторная генерация с правками, используя прошлый скрипт как контекст.
 - `buxter web` — browser-слой: Claude управляет Chromium (Playwright), загружает STL/STEP в веб-инструмент, выставляет параметры, запускает расчёт.
+- `buxter bim index` / `buxter bim ask` — BIM-слой: реляционная индексация комплекта строительных PDF (реестр листов, ревизии, дисциплины) и агент для подсчёта объёмов/материалов с обязательными источниками и оценкой надёжности.
 - `--backend freecad|fusion` — переключение между движками.
 - Jupyter notebook `notebooks/drawing_playground.ipynb` для интерактивных итераций.
 
@@ -129,6 +130,38 @@ buxter web \
 закончить `finish(success, summary)`. Загружать можно только файлы из `-a` —
 это жёсткий whitelist. `--headed` показывает окно браузера.
 
+### BIM-анализ строительной документации (`buxter bim`)
+
+Установка (однократно):
+
+```bash
+pip install -e ".[bim]"   # pdfplumber + pypdfium2
+```
+
+Сначала индексация комплекта — строится мастер-реестр `drawings.md`
+(лист / PDF-страница / ревизия / дисциплина / статус текстового слоя),
+скелеты `objects-database.md` и `specs-wiki.md` и манифест комплекта:
+
+```bash
+buxter bim index КЖ-1.pdf КЖ-2.pdf -w bim/
+```
+
+Затем вопросы по комплекту — агент работает по Relational Indexing
+Workflow: сначала векторный текст и таблицы, подсчёт марок с
+кластеризацией по координатам, и только в крайнем случае визуальное
+чтение конкретного листа (`render_page`):
+
+```bash
+buxter bim ask "Сколько фундаментов F1 и какой объём бетона по ним?" -w bim/
+```
+
+Ответ приходит структурированным: результат, источники вида
+`[Лист S-101, PDF стр. 4]` для каждого числа, надёжность
+High/Medium/Low и список неподтверждённых данных. Марки в легендах и
+примечаниях исключаются из подсчёта, объём не считается подтверждённым
+без третьей координаты из разреза или ведомости. Подробнее —
+[docs/bim-analysis-architecture.md](docs/bim-analysis-architecture.md).
+
 Итерировать (бэкенд автоматически определяется по наличию `_gen.py` или `_gen_fusion.py`, либо задаётся явно):
 
 ```bash
@@ -179,6 +212,8 @@ photo + description ─▶ buxter.vision ─▶ Claude (multimodal)
 | `src/buxter/validator.py`      | Printability-gate: watertight/bbox/min-wall (trimesh) |
 | `src/buxter/browser.py`        | Playwright-сессия: DOM-дайджест, клики, upload      |
 | `src/buxter/web_agent.py`      | Web Operator Agent: tool-use loop поверх браузера   |
+| `src/buxter/pdf_index.py`      | Индексация PDF-комплекта: реестр листов, поиск марок |
+| `src/buxter/bim_agent.py`      | BIM Analysis Agent: tool-use loop поверх индекса    |
 | `src/buxter/bootstrap.py`      | Поиск бинарей (`freecadcmd`, Fusion 360)           |
 | `src/buxter/config.py`         | Настройки через `.env` (pydantic-settings)          |
 

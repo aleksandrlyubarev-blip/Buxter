@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     web_max_steps: int = Field(default=40, alias="BUXTER_WEB_MAX_STEPS")
     web_step_timeout_ms: int = Field(default=15_000, alias="BUXTER_WEB_STEP_TIMEOUT_MS")
     web_chromium_path: str | None = Field(default=None, alias="BUXTER_WEB_CHROMIUM")
+    bim_max_steps: int = Field(default=60, alias="BUXTER_BIM_MAX_STEPS")
+    bim_render_dpi: int = Field(default=150, alias="BUXTER_BIM_RENDER_DPI")
+    bim_workdir: Path = Field(default=Path("./bim"), alias="BUXTER_BIM_WORKDIR")
 
 
 def load_settings() -> Settings:
