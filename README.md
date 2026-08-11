@@ -217,6 +217,14 @@ photo + description ─▶ buxter.vision ─▶ Claude (multimodal)
 | `src/buxter/bootstrap.py`      | Поиск бинарей (`freecadcmd`, Fusion 360)           |
 | `src/buxter/config.py`         | Настройки через `.env` (pydantic-settings)          |
 
+## Документация
+
+| Документ | О чём |
+|---|---|
+| [docs/cad-browser-architecture.md](docs/cad-browser-architecture.md) | Browser-слой: Web Operator Agent на Playwright |
+| [docs/bim-analysis-architecture.md](docs/bim-analysis-architecture.md) | BIM-слой: Relational Indexing Workflow |
+| [docs/nvidia-l40-analysis.md](docs/nvidia-l40-analysis.md) | Анализ применимости внешней NVIDIA L40: что переносить на GPU, а что нет |
+
 ## Troubleshooting
 
 - **`freecadcmd not found`** — установи FreeCAD или задай `FREECAD_CMD=/полный/путь/до/freecadcmd` в `.env`.
