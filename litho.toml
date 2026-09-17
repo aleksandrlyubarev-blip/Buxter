@@ -1,0 +1,38 @@
+# Verified against deepwiki-rs 1.6.0 (see litho/README.md).
+# Run the wrapper; it exports a bounded public-source snapshot before invoking Litho.
+project_name = "Buxter"
+project_path = "."
+output_path = "docs/litho"
+target_language = "en"
+git_tracked_only = true
+include_hidden = false
+include_tests = false
+max_file_size = 524288
+excluded_dirs = [".git", ".litho", ".litho-cache", "node_modules", "target", "dist", "build", "venv", ".venv", "__pycache__", "video", "videos", "datasets", "data", "roboqc_data", "private", "customer_data"]
+excluded_files = [".env", ".env.*", "*.litho-cache", "*.log", "*.lock", "litho.toml"]
+excluded_extensions = ["mp4", "mov", "avi", "webm", "mp3", "wav", "png", "jpg", "jpeg", "pdf", "zip", "tar", "gz", "stl", "step", "onnx", "pt", "pth", "safetensors"]
+# Deliberately no [llm] table: in 1.6.0 its default reads LITHO_LLM_API_KEY.
+# TOML does NOT interpolate ${ENV}; the wrapper sets provider/model CLI options.
+
+[knowledge.local_docs]
+enabled = true
+cache_dir = ".litho/cache/knowledge/local_docs"
+watch_for_changes = true
+
+[[knowledge.local_docs.categories]]
+name = "architecture"
+description = "Human-maintained product scope, implementation gaps and external boundaries"
+paths = ["litho/context/*.md"]
+target_agents = []
+
+[[knowledge.local_docs.categories]]
+name = "workflow"
+description = "Human-maintained product scope, implementation gaps and external boundaries"
+paths = ["litho/context/*.md"]
+target_agents = []
+
+[[knowledge.local_docs.categories]]
+name = "api"
+description = "Human-maintained product scope, implementation gaps and external boundaries"
+paths = ["litho/context/*.md"]
+target_agents = []

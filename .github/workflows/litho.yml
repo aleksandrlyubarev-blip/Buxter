@@ -1,0 +1,75 @@
+name: Litho architecture docs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "app.py"
+      - "litho/**"
+      - "litho.toml"
+      - "scripts/litho_generate.sh"
+      - "README.md"
+      - ".github/workflows/litho.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: litho-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.key.outputs.enabled }}
+    steps:
+      - name: Check whether generation is configured
+        id: key
+        env:
+          LITHO_LLM_API_KEY: ${{ secrets.LITHO_LLM_API_KEY }}
+        run: |
+          if [[ -z "${LITHO_LLM_API_KEY//[[:space:]]/}" ]]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'Litho skipped: LITHO_LLM_API_KEY is not configured. No LLM calls; forks need no secret.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  generate:
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            litho
+            scripts
+            src/buxter
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install pinned Litho
+        run: |
+          cargo install deepwiki-rs --version 1.6.0 --locked
+          deepwiki-rs --version
+      - name: Generate English architecture
+        env:
+          LITHO_LLM_API_KEY: ${{ secrets.LITHO_LLM_API_KEY }}
+          LITHO_LLM_API_BASE_URL: ${{ secrets.LITHO_LLM_API_BASE_URL }}
+          LITHO_MODEL_EFFICIENT: ${{ vars.LITHO_MODEL_EFFICIENT }}
+          LITHO_MODEL_POWERFUL: ${{ vars.LITHO_MODEL_POWERFUL }}
+          LITHO_TARGET_LANGUAGE: en
+        run: bash scripts/litho_generate.sh
+      - name: Upload generated Markdown for human review
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: litho-docs-${{ github.sha }}
+          path: docs/litho/**/*.md
+          if-no-files-found: error
+          retention-days: 14

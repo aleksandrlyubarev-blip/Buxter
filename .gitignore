@@ -13,3 +13,12 @@ dist/
 *.step
 !samples/*.stl
 !samples/*.step
+
+# Litho documentation automation (including its actual internal directory)
+.litho/
+.litho-cache/
+*.litho-cache/
+litho.docs/
+litho/.inputs/
+.env
+.env.*
